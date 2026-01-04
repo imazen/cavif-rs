@@ -16,6 +16,10 @@ quick_error! {
         Unsupported(msg: &'static str) {
             display("Not supported: {}", msg)
         }
+        /// Encoding was cancelled via a cancellation token
+        Cancelled {
+            display("Encoding was cancelled")
+        }
         EncodingError(e: EncodingErrorDetail) {
             display("Encoding error reported by rav1e")
             from(_e: rav1e::InvalidConfig) -> (EncodingErrorDetail)
