@@ -609,9 +609,15 @@ fn rgb_to_8_bit_ycbcr(px: rgb::RGB<u8>, matrix: [f32; 3]) -> (u8, u8, u8) {
 }
 
 fn quality_to_quantizer(quality: f32) -> u8 {
-    let q = quality / 100.;
-    let x = if q >= 0.82 { (1. - q) * 2.6 } else if q > 0.25 { q.mul_add(-0.5, 1. - 0.125) } else { 1. - q };
-    (x * 255.).round() as u8
+    let q = quality.clamp(1., 100.) / 100.;
+    let x = if q >= 0.70 {
+        (1. - q) * 1.4          // Q70-100 → qindex 0-107
+    } else if q > 0.10 {
+        0.42 + (0.70 - q) * 0.85  // Q10-70 → qindex 107-237
+    } else {
+        0.93 + (0.10 - q) * 0.78  // Q1-10 → qindex 237-255
+    };
+    (x.min(1.0) * 255.).round() as u8
 }
 
 #[derive(Debug, Copy, Clone)]
@@ -638,8 +644,10 @@ struct SpeedTweaks {
 
 impl SpeedTweaks {
     pub fn from_my_preset(speed: u8, quantizer: u8) -> Self {
-        let low_quality = quantizer < quality_to_quantizer(55.);
-        let high_quality = quantizer > quality_to_quantizer(80.);
+        // Use fixed quantizer thresholds instead of quality_to_quantizer()
+        // so these don't shift when the quality curve changes
+        let low_quality = quantizer > 150;  // ~Q50 and below
+        let high_quality = quantizer < 80;   // ~Q80 and above
         let max_block_size = if high_quality { 16 } else { 64 };
 
         Self {
