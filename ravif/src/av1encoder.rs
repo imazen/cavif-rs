@@ -690,6 +690,9 @@ struct SpeedTweaks {
     pub fine_directional_intra: Option<bool>,
     pub complex_prediction_modes: Option<bool>,
     pub partition_range: Option<(u8, u8)>,
+    pub segmentation: Option<SegmentationLevel>,
+    pub lru_on_skip: Option<bool>,
+    pub non_square_partition_max_threshold: Option<BlockSize>,
     pub min_tile_size: u16,
 }
 
@@ -738,6 +741,17 @@ impl SpeedTweaks {
 
             tx_domain_distortion: None, // very mixed bag, sometimes helps speed sometimes it doesn't
             use_satd_subpel: Some(false), // doesn't make sense
+            segmentation: Some(if speed <= 2 {
+                SegmentationLevel::Complex
+            } else {
+                SegmentationLevel::Simple
+            }),
+            lru_on_skip: Some(speed <= 1),
+            non_square_partition_max_threshold: Some(match speed {
+                0..=1 => BlockSize::BLOCK_64X64,
+                2..=3 => BlockSize::BLOCK_32X32,
+                _ => BlockSize::BLOCK_8X8,
+            }),
             min_tile_size: match speed {
                 0 => 4096,
                 1 => 2048,
@@ -785,6 +799,9 @@ impl SpeedTweaks {
             }
             speed_settings.partition.partition_range = PartitionRange::new(sz(min), sz(max));
         }
+        if let Some(v) = self.segmentation { speed_settings.segmentation = v; }
+        if let Some(v) = self.lru_on_skip { speed_settings.lru_on_skip = v; }
+        if let Some(v) = self.non_square_partition_max_threshold { speed_settings.partition.non_square_partition_max_threshold = v; }
 
         speed_settings
     }
