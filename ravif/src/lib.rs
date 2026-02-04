@@ -81,7 +81,7 @@ pub use error::Error;
 #[deprecated = "Renamed to `ColorModel`"]
 pub type ColorSpace = ColorModel;
 
-pub use av1encoder::{AlphaColorMode, BitDepth, EncodedImage, Encoder};
+pub use av1encoder::{AlphaColorMode, BitDepth, ChromaSubsampling, EncodedImage, Encoder};
 #[doc(inline)]
 pub use rav1e::prelude::{MatrixCoefficients, PixelRange};
 
@@ -370,4 +370,76 @@ fn test_timeout_and_cancellation_token_together() {
         assert!(elapsed < Duration::from_secs(1),
             "Should cancel sooner: {:?}", elapsed);
     }
+}
+
+#[test]
+fn encode_420_smaller_than_444() {
+    let img = imgref::ImgVec::new((0..200u32).flat_map(|y| (0..256u32).map(move |x| {
+        RGBA8::new((x.wrapping_mul(7).wrapping_add(y * 3)) as u8,
+                   (x.wrapping_add(y * 5)) as u8,
+                   (x * 3).wrapping_sub(y) as u8, 255)
+    })).collect(), 256, 200);
+
+    let enc_444 = Encoder::new()
+        .with_quality(70.0)
+        .with_speed(10)
+        .with_chroma_subsampling(ChromaSubsampling::Yuv444)
+        .with_num_threads(Some(1));
+    let result_444 = enc_444.encode_rgba(img.as_ref()).unwrap();
+
+    let enc_420 = Encoder::new()
+        .with_quality(70.0)
+        .with_speed(10)
+        .with_chroma_subsampling(ChromaSubsampling::Yuv420)
+        .with_num_threads(Some(1));
+    let result_420 = enc_420.encode_rgba(img.as_ref()).unwrap();
+
+    // 4:2:0 should produce smaller files
+    assert!(result_420.avif_file.len() < result_444.avif_file.len(),
+        "420 ({}) should be smaller than 444 ({})",
+        result_420.avif_file.len(), result_444.avif_file.len());
+
+    // Verify the AVIF container has correct chroma subsampling metadata
+    let parsed_420 = avif_parse::read_avif(&mut result_420.avif_file.as_slice()).unwrap();
+    let md_420 = parsed_420.primary_item_metadata().unwrap();
+    assert_eq!(md_420.chroma_subsampling, (true, true), "420 should have both subsampling flags set");
+
+    let parsed_444 = avif_parse::read_avif(&mut result_444.avif_file.as_slice()).unwrap();
+    let md_444 = parsed_444.primary_item_metadata().unwrap();
+    assert_eq!(md_444.chroma_subsampling, (false, false), "444 should not have subsampling flags set");
+}
+
+#[test]
+fn encode_420_odd_dimensions() {
+    // Test with odd width and height to exercise edge handling
+    let img = imgref::ImgVec::new((0..101).flat_map(|y| (0..129).map(move |x| {
+        RGBA8::new((x * 3) as u8, (y * 5) as u8, ((x + y) * 7) as u8, 255)
+    })).collect(), 129, 101);
+
+    let enc = Encoder::new()
+        .with_quality(60.0)
+        .with_speed(10)
+        .with_chroma_subsampling(ChromaSubsampling::Yuv420)
+        .with_num_threads(Some(1));
+    let result = enc.encode_rgba(img.as_ref()).unwrap();
+    assert!(result.color_byte_size > 0);
+
+    let parsed = avif_parse::read_avif(&mut result.avif_file.as_slice()).unwrap();
+    let md = parsed.primary_item_metadata().unwrap();
+    assert_eq!(md.max_frame_width.get(), 129);
+    assert_eq!(md.max_frame_height.get(), 101);
+}
+
+#[test]
+fn encode_420_rgb_rejected() {
+    let img = imgref::ImgVec::new(vec![RGBA8::new(128, 128, 128, 255); 64 * 64], 64, 64);
+
+    let enc = Encoder::new()
+        .with_quality(70.0)
+        .with_speed(10)
+        .with_internal_color_model(ColorModel::RGB)
+        .with_chroma_subsampling(ChromaSubsampling::Yuv420)
+        .with_num_threads(Some(1));
+    let result = enc.encode_rgba(img.as_ref());
+    assert!(result.is_err(), "RGB + 420 should return an error");
 }

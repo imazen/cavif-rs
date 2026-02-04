@@ -1,6 +1,6 @@
 use clap::{value_parser, Arg, ArgAction, Command};
 use imgref::ImgVec;
-use ravif::{AlphaColorMode, BitDepth, ColorModel, EncodedImage, Encoder, RGBA8};
+use ravif::{AlphaColorMode, BitDepth, ChromaSubsampling, ColorModel, EncodedImage, Encoder, RGBA8};
 use rayon::prelude::*;
 use std::fs;
 use std::io::{Read, Write};
@@ -101,6 +101,11 @@ fn run() -> Result<(), BoxError> {
             .default_value("auto")
             .value_parser(["8", "10", "auto"])
             .help("Write 8-bit (more compatible) or 10-bit (better quality) images"))
+        .arg(Arg::new("yuv")
+            .long("yuv")
+            .default_value("444")
+            .value_parser(["444", "420"])
+            .help("Chroma subsampling: 444 (full resolution) or 420 (half, smaller files)"))
         .arg(Arg::new("IMAGES")
             .index(1)
             .num_args(1..)
@@ -130,6 +135,11 @@ fn run() -> Result<(), BoxError> {
         "8" => BitDepth::Eight,
         "10" => BitDepth::Ten,
         _ => BitDepth::Auto,
+    };
+
+    let chroma_subsampling = match args.get_one::<String>("yuv").expect("default").as_str() {
+        "420" => ChromaSubsampling::Yuv420,
+        _ => ChromaSubsampling::Yuv444,
     };
 
     let files = args.get_many::<PathBuf>("IMAGES").ok_or("Please specify image paths to convert")?;
@@ -205,7 +215,8 @@ fn run() -> Result<(), BoxError> {
             .with_alpha_quality(alpha_quality)
             .with_internal_color_model(color_model)
             .with_alpha_color_mode(if dirty_alpha { AlphaColorMode::UnassociatedDirty } else { AlphaColorMode::UnassociatedClean })
-            .with_num_threads(threads.filter(|&n| n > 0).map(usize::from));
+            .with_num_threads(threads.filter(|&n| n > 0).map(usize::from))
+            .with_chroma_subsampling(chroma_subsampling);
         let EncodedImage { avif_file, color_byte_size, alpha_byte_size , .. } = enc.encode_rgba(img.as_ref())?;
         match out_path {
             MaybePath::Path(ref p) => {

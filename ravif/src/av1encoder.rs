@@ -42,6 +42,20 @@ pub enum ColorModel {
     RGB,
 }
 
+/// Chroma subsampling mode. For [`Encoder::with_chroma_subsampling`]
+#[derive(Debug, Copy, Clone, Eq, PartialEq, Default)]
+pub enum ChromaSubsampling {
+    /// Full-resolution chroma (4:4:4). Best quality, larger files.
+    /// This is the default and generally recommended for AVIF.
+    #[default]
+    Yuv444,
+    /// Half-resolution chroma in both dimensions (4:2:0).
+    /// Reduces file size by ~25-35% with minimal quality loss on photographic content.
+    /// Not recommended for text, sharp edges, or synthetic images.
+    /// Cannot be used with [`ColorModel::RGB`].
+    Yuv420,
+}
+
 /// Handling of color channels in transparent images. For [`Encoder::with_alpha_color_mode`]
 #[derive(Debug, Copy, Clone, Eq, PartialEq)]
 pub enum AlphaColorMode {
@@ -102,6 +116,8 @@ pub struct Encoder<'exif_slice> {
     alpha_color_mode: AlphaColorMode,
     /// 8 or 10
     output_depth: BitDepth,
+    /// [`ChromaSubsampling`]
+    chroma_subsampling: ChromaSubsampling,
     /// Dropped into MPEG infe BOX
     exif: Option<Cow<'exif_slice, [u8]>>,
     /// Optional cancellation token for interrupting encoding
@@ -117,6 +133,7 @@ impl<'exif_slice> Default for Encoder<'exif_slice> {
             alpha_quantizer: quality_to_quantizer(80.),
             speed: 5,
             output_depth: BitDepth::default(),
+            chroma_subsampling: ChromaSubsampling::default(),
             premultiplied_alpha: false,
             color_model: ColorModel::YCbCr,
             threads: None,
@@ -226,6 +243,20 @@ impl<'exif_slice> Encoder<'exif_slice> {
     pub fn with_alpha_color_mode(mut self, mode: AlphaColorMode) -> Self {
         self.alpha_color_mode = mode;
         self.premultiplied_alpha = mode == AlphaColorMode::Premultiplied;
+        self
+    }
+
+    /// Set chroma subsampling mode.
+    ///
+    /// [`ChromaSubsampling::Yuv444`] (default) keeps full-resolution chroma for best quality.
+    /// [`ChromaSubsampling::Yuv420`] halves chroma resolution in both dimensions,
+    /// reducing file size by ~25-35% with minimal quality loss on photographic content.
+    ///
+    /// Cannot be combined with [`ColorModel::RGB`].
+    #[inline(always)]
+    #[must_use]
+    pub fn with_chroma_subsampling(mut self, subsampling: ChromaSubsampling) -> Self {
+        self.chroma_subsampling = subsampling;
         self
     }
 
@@ -479,6 +510,10 @@ impl Encoder<'_> {
         color_pixel_range: PixelRange, matrix_coefficients: MatrixCoefficients,
         input_pixels_bit_depth: u8,
     ) -> Result<EncodedImage, Error> {
+        if self.chroma_subsampling == ChromaSubsampling::Yuv420 && matrix_coefficients == MatrixCoefficients::Identity {
+            return Err(Error::Unsupported("4:2:0 chroma subsampling with RGB color model"));
+        }
+
         let color_description = Some(ColorDescription {
             transfer_characteristics: TransferCharacteristics::SRGB,
             color_primaries: ColorPrimaries::BT709, // sRGB-compatible
@@ -495,6 +530,12 @@ impl Encoder<'_> {
         // Calculate deadline from timeout if set
         let deadline = self.timeout.map(|timeout| std::time::Instant::now() + timeout);
 
+        let chroma_sampling = match self.chroma_subsampling {
+            ChromaSubsampling::Yuv444 => ChromaSampling::Cs444,
+            ChromaSubsampling::Yuv420 => ChromaSampling::Cs420,
+        };
+
+        let use_420 = self.chroma_subsampling == ChromaSubsampling::Yuv420;
         let encode_color = move || {
             encode_to_av1::<P>(
                 &Av1EncodeConfig {
@@ -505,12 +546,18 @@ impl Encoder<'_> {
                     speed: SpeedTweaks::from_my_preset(self.speed, self.quantizer),
                     threads,
                     pixel_range: color_pixel_range,
-                    chroma_sampling: ChromaSampling::Cs444,
+                    chroma_sampling,
                     color_description,
                 },
                 cancel_token,
                 deadline,
-                move |frame| init_frame_3(width, height, planes, frame, cancel_token, deadline),
+                move |frame| {
+                    if use_420 {
+                        init_frame_3_420(width, height, planes, frame, cancel_token, deadline)
+                    } else {
+                        init_frame_3(width, height, planes, frame, cancel_token, deadline)
+                    }
+                },
             )
         };
         let encode_alpha = move || {
@@ -552,6 +599,10 @@ impl Encoder<'_> {
                 _ => return Err(Error::Unsupported("matrix coefficients")),
             })
             .premultiplied_alpha(self.premultiplied_alpha);
+        if self.chroma_subsampling == ChromaSubsampling::Yuv420 {
+            serializer_config.set_chroma_subsampling((true, true));
+            serializer_config.set_seq_profile(0); // Main profile for 4:2:0
+        }
         if let Some(exif) = &self.exif {
             serializer_config.set_exif(exif.to_vec());
         }
@@ -832,6 +883,92 @@ fn init_frame_3<P: rav1e::Pixel + Default>(
             pixel_count += 1;
             if pixel_count % CHECK_INTERVAL == 0 {
                 check_cancellation(cancel_token, deadline)?;
+            }
+        }
+    }
+    Ok(())
+}
+
+/// Initialize a frame with 4:2:0 chroma subsampling.
+/// Luma is written at full resolution, chroma is box-filtered to half resolution.
+fn init_frame_3_420<P: rav1e::Pixel + Default>(
+    width: usize,
+    height: usize,
+    planes: impl IntoIterator<Item = [P; 3]> + Send,
+    frame: &mut Frame<P>,
+    cancel_token: Option<&CancellationToken>,
+    deadline: Option<std::time::Instant>,
+) -> Result<(), Error> {
+    let chroma_width = (width + 1) / 2;
+    let chroma_height = (height + 1) / 2;
+
+    let mut f = frame.planes.iter_mut();
+    let mut planes = planes.into_iter();
+
+    let mut y_plane = f.next().unwrap().mut_slice(Default::default());
+    let mut u_plane = f.next().unwrap().mut_slice(Default::default());
+    let mut v_plane = f.next().unwrap().mut_slice(Default::default());
+
+    // Process two luma rows at a time, producing one chroma row each pair
+    let mut y_rows = y_plane.rows_iter_mut();
+    let mut u_rows = u_plane.rows_iter_mut();
+    let mut v_rows = v_plane.rows_iter_mut();
+
+    let mut pixel_count = 0usize;
+    const CHECK_INTERVAL: usize = 1_000_000;
+
+    // We need to buffer one row of chroma accumulators
+    // Use u32 to avoid overflow when summing up to 4 P values
+    let mut u_acc: Vec<u32> = vec![0; chroma_width];
+    let mut v_acc: Vec<u32> = vec![0; chroma_width];
+    let mut row_count: Vec<u8> = vec![0; chroma_width];
+
+    for row_idx in 0..height {
+        let y_row = y_rows.next().unwrap();
+        let y_row = &mut y_row[..width];
+
+        for col_idx in 0..width {
+            let px = planes.next().ok_or(Error::TooFewPixels)?;
+            y_row[col_idx] = px[0];
+
+            let cx = col_idx / 2;
+            u_acc[cx] += Into::<u32>::into(px[1]);
+            v_acc[cx] += Into::<u32>::into(px[2]);
+            // Track how many pixels contribute to this chroma sample
+            // (1, 2, or 4 depending on edge conditions)
+            if row_idx % 2 == 0 && col_idx % 2 == 0 {
+                row_count[cx] = 1;
+            } else {
+                row_count[cx] += 1;
+            }
+
+            pixel_count += 1;
+            if pixel_count % CHECK_INTERVAL == 0 {
+                check_cancellation(cancel_token, deadline)?;
+            }
+        }
+
+        // After every second row (or the last row if height is odd), write chroma
+        if row_idx % 2 == 1 || row_idx == height - 1 {
+            let chroma_row_idx = row_idx / 2;
+            if chroma_row_idx < chroma_height {
+                let u_row = u_rows.next().unwrap();
+                let v_row = v_rows.next().unwrap();
+                let u_row = &mut u_row[..chroma_width];
+                let v_row = &mut v_row[..chroma_width];
+
+                for cx in 0..chroma_width {
+                    let count = u32::from(row_count[cx]);
+                    // Box filter: average with rounding
+                    let u_val = (u_acc[cx] + count / 2) / count;
+                    let v_val = (v_acc[cx] + count / 2) / count;
+                    u_row[cx] = P::cast_from(u_val);
+                    v_row[cx] = P::cast_from(v_val);
+                }
+
+                // Reset accumulators for next pair
+                u_acc.iter_mut().for_each(|v| *v = 0);
+                v_acc.iter_mut().for_each(|v| *v = 0);
             }
         }
     }
