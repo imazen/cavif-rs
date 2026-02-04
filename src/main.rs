@@ -27,7 +27,7 @@ enum MaybePath {
 
 fn parse_quality(arg: &str) -> Result<f32, String> {
     let q = arg.parse::<f32>().map_err(|e| e.to_string())?;
-    if q < 1. || q > 100. {
+    if !(1. ..=100.).contains(&q) {
         return Err("quality must be in 1-100 range".into());
     }
     Ok(q)
@@ -35,7 +35,7 @@ fn parse_quality(arg: &str) -> Result<f32, String> {
 
 fn parse_speed(arg: &str) -> Result<u8, String> {
     let s = arg.parse::<u8>().map_err(|e| e.to_string())?;
-    if s < 1 || s > 100 {
+    if !(1..=100).contains(&s) {
         return Err("speed must be in 1-10 range".into());
     }
     Ok(s)

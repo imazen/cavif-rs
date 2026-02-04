@@ -916,8 +916,8 @@ fn init_frame_3_420<P: rav1e::Pixel + Default>(
     cancel_token: Option<&CancellationToken>,
     deadline: Option<std::time::Instant>,
 ) -> Result<(), Error> {
-    let chroma_width = (width + 1) / 2;
-    let chroma_height = (height + 1) / 2;
+    let chroma_width = width.div_ceil(2);
+    let chroma_height = height.div_ceil(2);
 
     let mut f = frame.planes.iter_mut();
     let mut planes = planes.into_iter();
@@ -944,9 +944,9 @@ fn init_frame_3_420<P: rav1e::Pixel + Default>(
         let y_row = y_rows.next().unwrap();
         let y_row = &mut y_row[..width];
 
-        for col_idx in 0..width {
+        for (col_idx, y_out) in y_row.iter_mut().enumerate() {
             let px = planes.next().ok_or(Error::TooFewPixels)?;
-            y_row[col_idx] = px[0];
+            *y_out = px[0];
 
             let cx = col_idx / 2;
             u_acc[cx] += Into::<u32>::into(px[1]);
