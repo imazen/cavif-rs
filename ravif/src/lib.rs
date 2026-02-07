@@ -443,3 +443,31 @@ fn encode_420_rgb_rejected() {
     let result = enc.encode_rgba(img.as_ref());
     assert!(result.is_err(), "RGB + 420 should return an error");
 }
+
+#[test]
+fn test_libavif_quality_produces_expected_quantizers() {
+    // with_libavif_quality should use linear mapping: qindex = 255 * (100 - Q) / 100
+    // Q70 -> qindex 76, Q50 -> qindex 128, Q30 -> qindex 178
+
+    // Use a varied pattern that actually compresses differently at different qualities
+    let img = imgref::ImgVec::new((0..128).flat_map(|y| (0..128).map(move |x| {
+        RGBA8::new((x * 3) as u8, (y * 5) as u8, ((x + y) * 7) as u8, 255)
+    })).collect(), 128, 128);
+
+    let r70 = Encoder::new().with_libavif_quality(70.).with_speed(10).encode_rgba(img.as_ref()).unwrap();
+    let r50 = Encoder::new().with_libavif_quality(50.).with_speed(10).encode_rgba(img.as_ref()).unwrap();
+    let r30 = Encoder::new().with_libavif_quality(30.).with_speed(10).encode_rgba(img.as_ref()).unwrap();
+
+    // Higher Q = smaller quantizer = larger file
+    assert!(r70.avif_file.len() > r50.avif_file.len(),
+        "Q70 ({}) should be larger than Q50 ({})", r70.avif_file.len(), r50.avif_file.len());
+    assert!(r50.avif_file.len() > r30.avif_file.len(),
+        "Q50 ({}) should be larger than Q30 ({})", r50.avif_file.len(), r30.avif_file.len());
+
+    // Compare to with_quality at same Q - they should differ due to different curves
+    let old70 = Encoder::new().with_quality(70.).with_speed(10).encode_rgba(img.as_ref()).unwrap();
+    // The old curve at Q70 gives qindex 107, libavif gives 76 - so libavif should be larger
+    assert!(r70.avif_file.len() > old70.avif_file.len(),
+        "libavif Q70 ({}) should be larger than old Q70 ({})",
+        r70.avif_file.len(), old70.avif_file.len());
+}

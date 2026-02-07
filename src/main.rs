@@ -106,6 +106,11 @@ fn run() -> Result<(), BoxError> {
             .default_value("444")
             .value_parser(["444", "420"])
             .help("Chroma subsampling: 444 (full resolution) or 420 (half, smaller files)"))
+        .arg(Arg::new("libavif-scale")
+            .long("libavif-scale")
+            .action(ArgAction::SetTrue)
+            .num_args(0)
+            .help("Interpret --quality using libavif/avifenc's linear scale instead of ravif's curve"))
         .arg(Arg::new("IMAGES")
             .index(1)
             .num_args(1..)
@@ -124,6 +129,7 @@ fn run() -> Result<(), BoxError> {
     let quiet = args.get_flag("quiet");
     let threads = args.get_one::<u8>("threads").copied();
     let dirty_alpha = args.get_flag("dirty-alpha");
+    let libavif_scale = args.get_flag("libavif-scale");
 
     let color_model = match args.get_one::<String>("color").expect("default").as_str() {
         "ycbcr" => ColorModel::YCbCr,
@@ -209,7 +215,6 @@ fn run() -> Result<(), BoxError> {
             _ => {},
         }
         let enc = Encoder::new()
-            .with_quality(quality)
             .with_bit_depth(depth)
             .with_speed(speed)
             .with_alpha_quality(alpha_quality)
@@ -217,6 +222,11 @@ fn run() -> Result<(), BoxError> {
             .with_alpha_color_mode(if dirty_alpha { AlphaColorMode::UnassociatedDirty } else { AlphaColorMode::UnassociatedClean })
             .with_num_threads(threads.filter(|&n| n > 0).map(usize::from))
             .with_chroma_subsampling(chroma_subsampling);
+        let enc = if libavif_scale {
+            enc.with_libavif_quality(quality)
+        } else {
+            enc.with_quality(quality)
+        };
         let EncodedImage { avif_file, color_byte_size, alpha_byte_size , .. } = enc.encode_rgba(img.as_ref())?;
         match out_path {
             MaybePath::Path(ref p) => {
