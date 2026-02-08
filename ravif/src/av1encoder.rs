@@ -78,6 +78,7 @@ pub enum AlphaColorMode {
 pub enum BitDepth {
     Eight,
     Ten,
+    Twelve,
     /// Same as `Ten`
     #[default]
     Auto,
@@ -124,6 +125,16 @@ pub struct Encoder<'exif_slice> {
     cancellation_token: Option<CancellationToken>,
     /// Optional timeout duration for encoding
     timeout: Option<std::time::Duration>,
+    /// Override color primaries (default: BT709 for sRGB)
+    color_primaries: Option<ColorPrimaries>,
+    /// Override transfer characteristics (default: SRGB)
+    transfer_characteristics: Option<TransferCharacteristics>,
+    /// Override pixel range (default: Full)
+    pixel_range: Option<PixelRange>,
+    /// HDR mastering display metadata (SMPTE ST 2086)
+    mastering_display: Option<MasteringDisplay>,
+    /// HDR content light level metadata (CEA-861.3)
+    content_light: Option<ContentLight>,
 }
 
 impl<'exif_slice> Default for Encoder<'exif_slice> {
@@ -141,6 +152,11 @@ impl<'exif_slice> Default for Encoder<'exif_slice> {
             alpha_color_mode: AlphaColorMode::UnassociatedClean,
             cancellation_token: None,
             timeout: None,
+            color_primaries: None,
+            transfer_characteristics: None,
+            pixel_range: None,
+            mastering_display: None,
+            content_light: None,
         }
     }
 }
@@ -345,6 +361,65 @@ impl<'exif_slice> Encoder<'exif_slice> {
         self.timeout = Some(timeout);
         self
     }
+
+    /// Set color primaries for the encoded image.
+    ///
+    /// Default is [`ColorPrimaries::BT709`] (sRGB). Use [`ColorPrimaries::BT2020`] for
+    /// wide gamut / HDR content, or [`ColorPrimaries::SMPTE432`] for Display P3.
+    ///
+    /// This must match the actual color space of the input pixels.
+    #[inline(always)]
+    #[must_use]
+    pub fn with_color_primaries(mut self, cp: ColorPrimaries) -> Self {
+        self.color_primaries = Some(cp);
+        self
+    }
+
+    /// Set transfer characteristics for the encoded image.
+    ///
+    /// Default is [`TransferCharacteristics::SRGB`]. Use [`TransferCharacteristics::SMPTE2084`]
+    /// for PQ (HDR10) or [`TransferCharacteristics::HLG`] for HLG.
+    ///
+    /// This must match the actual transfer function of the input pixels.
+    #[inline(always)]
+    #[must_use]
+    pub fn with_transfer_characteristics(mut self, tc: TransferCharacteristics) -> Self {
+        self.transfer_characteristics = Some(tc);
+        self
+    }
+
+    /// Set pixel value range.
+    ///
+    /// Default is [`PixelRange::Full`]. Use [`PixelRange::Limited`] for broadcast/studio
+    /// content with limited (narrow) range values.
+    #[inline(always)]
+    #[must_use]
+    pub fn with_pixel_range(mut self, range: PixelRange) -> Self {
+        self.pixel_range = Some(range);
+        self
+    }
+
+    /// Set HDR mastering display color volume metadata (SMPTE ST 2086).
+    ///
+    /// This metadata describes the display on which the content was mastered.
+    /// It is embedded in both the AV1 bitstream and the AVIF container.
+    #[inline(always)]
+    #[must_use]
+    pub fn with_mastering_display(mut self, md: MasteringDisplay) -> Self {
+        self.mastering_display = Some(md);
+        self
+    }
+
+    /// Set HDR content light level metadata (CEA-861.3).
+    ///
+    /// Describes the maximum and average light levels of the content.
+    /// It is embedded in both the AV1 bitstream and the AVIF container.
+    #[inline(always)]
+    #[must_use]
+    pub fn with_content_light(mut self, cl: ContentLight) -> Self {
+        self.content_light = Some(cl);
+        self
+    }
 }
 
 /// Once done with config, call one of the `encode_*` functions
@@ -383,6 +458,7 @@ impl Encoder<'_> {
             ColorModel::YCbCr => MatrixCoefficients::BT601,
             ColorModel::RGB => MatrixCoefficients::Identity,
         };
+        let pixel_range = self.pixel_range.unwrap_or(PixelRange::Full);
         match self.output_depth {
             BitDepth::Eight => {
                 let planes = buffer.pixels().map(|px| match self.color_model {
@@ -390,7 +466,7 @@ impl Encoder<'_> {
                     ColorModel::RGB => rgb_to_8_bit_gbr(px.rgb()).into(),
                 });
                 let alpha = buffer.pixels().map(|px| px.a);
-                self.encode_raw_planes_8_bit(width, height, planes, Some(alpha), PixelRange::Full, matrix_coefficients)
+                self.encode_raw_planes_8_bit(width, height, planes, Some(alpha), pixel_range, matrix_coefficients)
             },
             BitDepth::Ten | BitDepth::Auto => {
                 let planes = buffer.pixels().map(|px| match self.color_model {
@@ -398,7 +474,15 @@ impl Encoder<'_> {
                     ColorModel::RGB => rgb_to_10_bit_gbr(px.rgb()).into(),
                 });
                 let alpha = buffer.pixels().map(|px| to_ten(px.a));
-                self.encode_raw_planes_10_bit(width, height, planes, Some(alpha), PixelRange::Full, matrix_coefficients)
+                self.encode_raw_planes_10_bit(width, height, planes, Some(alpha), pixel_range, matrix_coefficients)
+            },
+            BitDepth::Twelve => {
+                let planes = buffer.pixels().map(|px| match self.color_model {
+                    ColorModel::YCbCr => rgb_to_12_bit_ycbcr(px.rgb(), BT601).into(),
+                    ColorModel::RGB => rgb_to_12_bit_gbr(px.rgb()).into(),
+                });
+                let alpha = buffer.pixels().map(|px| to_twelve(px.a));
+                self.encode_raw_planes_12_bit(width, height, planes, Some(alpha), pixel_range, matrix_coefficients)
             },
         }
     }
@@ -454,6 +538,7 @@ impl Encoder<'_> {
             ColorModel::RGB => MatrixCoefficients::Identity,
         };
 
+        let pixel_range = self.pixel_range.unwrap_or(PixelRange::Full);
         match self.output_depth {
             BitDepth::Eight => {
                 let planes = pixels.map(|px| {
@@ -463,7 +548,7 @@ impl Encoder<'_> {
                     };
                     [y, u, v]
                 });
-                self.encode_raw_planes_8_bit(width, height, planes, None::<[_; 0]>, PixelRange::Full, matrix_coefficients)
+                self.encode_raw_planes_8_bit(width, height, planes, None::<[_; 0]>, pixel_range, matrix_coefficients)
             },
             BitDepth::Ten | BitDepth::Auto => {
                 let planes = pixels.map(|px| {
@@ -473,7 +558,17 @@ impl Encoder<'_> {
                     };
                     [y, u, v]
                 });
-                self.encode_raw_planes_10_bit(width, height, planes, None::<[_; 0]>, PixelRange::Full, matrix_coefficients)
+                self.encode_raw_planes_10_bit(width, height, planes, None::<[_; 0]>, pixel_range, matrix_coefficients)
+            },
+            BitDepth::Twelve => {
+                let planes = pixels.map(|px| {
+                    let (y, u, v) = match self.color_model {
+                        ColorModel::YCbCr => rgb_to_12_bit_ycbcr(px, BT601),
+                        ColorModel::RGB => rgb_to_12_bit_gbr(px),
+                    };
+                    [y, u, v]
+                });
+                self.encode_raw_planes_12_bit(width, height, planes, None::<[_; 0]>, pixel_range, matrix_coefficients)
             },
         }
     }
@@ -504,7 +599,7 @@ impl Encoder<'_> {
     /// Encodes AVIF from 3 planar channels that are in the color space described by `matrix_coefficients`,
     /// with sRGB transfer characteristics and color primaries.
     ///
-    /// The pixels are 10-bit (values `0.=1023`) in host's native endian.
+    /// The pixels are 10-bit (values `0..=1023`) in host's native endian.
     ///
     /// Alpha always uses full range. Chroma subsampling is not supported, and it's a bad idea for AVIF anyway.
     /// If there's no alpha, use `None::<[_; 0]>`.
@@ -525,6 +620,24 @@ impl Encoder<'_> {
         self.encode_raw_planes_internal(width, height, planes, alpha, color_pixel_range, matrix_coefficients, 10)
     }
 
+    /// Encodes AVIF from 3 planar channels that are in the color space described by `matrix_coefficients`.
+    ///
+    /// The pixels are 12-bit (values `0..=4095`) in host's native endian.
+    /// 12-bit depth is useful for HDR content with PQ or HLG transfer characteristics.
+    ///
+    /// Alpha always uses full range. If there's no alpha, use `None::<[_; 0]>`.
+    ///
+    /// returns AVIF file, size of color metadata, size of alpha metadata overhead
+    #[inline]
+    pub fn encode_raw_planes_12_bit(
+        &self, width: usize, height: usize,
+        planes: impl IntoIterator<Item = [u16; 3]> + Send,
+        alpha: Option<impl IntoIterator<Item = u16> + Send>,
+        color_pixel_range: PixelRange, matrix_coefficients: MatrixCoefficients,
+    ) -> Result<EncodedImage, Error> {
+        self.encode_raw_planes_internal(width, height, planes, alpha, color_pixel_range, matrix_coefficients, 12)
+    }
+
     #[inline(never)]
     #[allow(clippy::too_many_arguments)]
     fn encode_raw_planes_internal<P: rav1e::Pixel + Default>(
@@ -539,8 +652,10 @@ impl Encoder<'_> {
         }
 
         let color_description = Some(ColorDescription {
-            transfer_characteristics: TransferCharacteristics::SRGB,
-            color_primaries: ColorPrimaries::BT709, // sRGB-compatible
+            transfer_characteristics: self.transfer_characteristics
+                .unwrap_or(TransferCharacteristics::SRGB),
+            color_primaries: self.color_primaries
+                .unwrap_or(ColorPrimaries::BT709),
             matrix_coefficients,
         });
 
@@ -560,6 +675,8 @@ impl Encoder<'_> {
         };
 
         let use_420 = self.chroma_subsampling == ChromaSubsampling::Yuv420;
+        let mastering_display = self.mastering_display;
+        let content_light = self.content_light;
         let encode_color = move || {
             encode_to_av1::<P>(
                 &Av1EncodeConfig {
@@ -572,6 +689,8 @@ impl Encoder<'_> {
                     pixel_range: color_pixel_range,
                     chroma_sampling,
                     color_description,
+                    mastering_display,
+                    content_light,
                 },
                 cancel_token,
                 deadline,
@@ -597,6 +716,8 @@ impl Encoder<'_> {
                         pixel_range: PixelRange::Full,
                         chroma_sampling: ChromaSampling::Cs400,
                         color_description: None,
+                        mastering_display: None,
+                        content_light: None,
                     },
                     cancel_token_alpha,
                     deadline,
@@ -623,6 +744,16 @@ impl Encoder<'_> {
                 _ => return Err(Error::Unsupported("matrix coefficients")),
             })
             .premultiplied_alpha(self.premultiplied_alpha);
+
+        let tc = self.transfer_characteristics.unwrap_or(TransferCharacteristics::SRGB);
+        serializer_config.set_transfer_characteristics(map_transfer_characteristics(tc));
+
+        let cp = self.color_primaries.unwrap_or(ColorPrimaries::BT709);
+        serializer_config.set_color_primaries(map_color_primaries(cp));
+
+        let pixel_range = self.pixel_range.unwrap_or(PixelRange::Full);
+        serializer_config.set_full_color_range(pixel_range == PixelRange::Full);
+
         if self.chroma_subsampling == ChromaSubsampling::Yuv420 {
             serializer_config.set_chroma_subsampling((true, true));
             serializer_config.set_seq_profile(0); // Main profile for 4:2:0
@@ -652,6 +783,18 @@ fn rgb_to_10_bit_gbr(px: rgb::RGB<u8>) -> (u16, u16, u16) {
     (to_ten(px.g), to_ten(px.b), to_ten(px.r))
 }
 
+/// Scale 8-bit to 12-bit: [0,255] → [0,4095]
+#[inline(always)]
+fn to_twelve(x: u8) -> u16 {
+    (u16::from(x) << 4) | (u16::from(x) >> 4)
+}
+
+/// Native endian
+#[inline(always)]
+fn rgb_to_12_bit_gbr(px: rgb::RGB<u8>) -> (u16, u16, u16) {
+    (to_twelve(px.g), to_twelve(px.b), to_twelve(px.r))
+}
+
 #[inline(always)]
 fn rgb_to_8_bit_gbr(px: rgb::RGB<u8>) -> (u8, u8, u8) {
     (px.g, px.b, px.r)
@@ -674,6 +817,12 @@ fn rgb_to_ycbcr(px: rgb::RGB<u8>, depth: u8, matrix: [f32; 3]) -> (f32, f32, f32
 #[inline(always)]
 fn rgb_to_10_bit_ycbcr(px: rgb::RGB<u8>, matrix: [f32; 3]) -> (u16, u16, u16) {
     let (y, u, v) = rgb_to_ycbcr(px, 10, matrix);
+    (y as u16, u as u16, v as u16)
+}
+
+#[inline(always)]
+fn rgb_to_12_bit_ycbcr(px: rgb::RGB<u8>, matrix: [f32; 3]) -> (u16, u16, u16) {
+    let (y, u, v) = rgb_to_ycbcr(px, 12, matrix);
     (y as u16, u as u16, v as u16)
 }
 
@@ -842,6 +991,8 @@ struct Av1EncodeConfig {
     pub pixel_range: PixelRange,
     pub chroma_sampling: ChromaSampling,
     pub color_description: Option<ColorDescription>,
+    pub mastering_display: Option<MasteringDisplay>,
+    pub content_light: Option<ContentLight>,
 }
 
 fn rav1e_config(p: &Av1EncodeConfig) -> Config {
@@ -863,8 +1014,8 @@ fn rav1e_config(p: &Av1EncodeConfig) -> Config {
         chroma_sample_position: ChromaSamplePosition::Unknown,
         pixel_range: p.pixel_range,
         color_description: p.color_description,
-        mastering_display: None,
-        content_light: None,
+        mastering_display: p.mastering_display,
+        content_light: p.content_light,
         enable_timing_info: false,
         still_picture: true,
         error_resilient: false,
@@ -889,6 +1040,51 @@ fn rav1e_config(p: &Av1EncodeConfig) -> Config {
         cfg.with_threads(threads)
     } else {
         cfg
+    }
+}
+
+/// Map rav1e TransferCharacteristics to avif-serialize TransferCharacteristics.
+/// Both use CICP values, so this is a 1:1 mapping on the common variants.
+fn map_transfer_characteristics(tc: TransferCharacteristics) -> avif_serialize::constants::TransferCharacteristics {
+    use avif_serialize::constants::TransferCharacteristics as TC;
+    match tc {
+        TransferCharacteristics::BT709 => TC::Bt709,
+        TransferCharacteristics::Unspecified => TC::Unspecified,
+        TransferCharacteristics::BT470M => TC::Bt470M,
+        TransferCharacteristics::BT470BG => TC::Bt470BG,
+        TransferCharacteristics::BT601 => TC::Bt601,
+        TransferCharacteristics::SMPTE240 => TC::Smpte240,
+        TransferCharacteristics::Linear => TC::Linear,
+        TransferCharacteristics::Log100 => TC::Log,
+        TransferCharacteristics::Log100Sqrt10 => TC::LogSqrt,
+        TransferCharacteristics::IEC61966 => TC::Iec61966,
+        TransferCharacteristics::BT1361 => TC::Bt1361,
+        TransferCharacteristics::SRGB => TC::Srgb,
+        TransferCharacteristics::BT2020_10Bit => TC::Bt2020_10,
+        TransferCharacteristics::BT2020_12Bit => TC::Bt2020_12,
+        TransferCharacteristics::SMPTE2084 => TC::Smpte2084,
+        TransferCharacteristics::SMPTE428 => TC::Smpte428,
+        TransferCharacteristics::HLG => TC::Hlg,
+    }
+}
+
+/// Map rav1e ColorPrimaries to avif-serialize ColorPrimaries.
+/// Both use CICP values. avif-serialize has fewer variants, so some map to Unspecified.
+fn map_color_primaries(cp: ColorPrimaries) -> avif_serialize::constants::ColorPrimaries {
+    use avif_serialize::constants::ColorPrimaries as CP;
+    match cp {
+        ColorPrimaries::BT709 => CP::Bt709,
+        ColorPrimaries::Unspecified => CP::Unspecified,
+        ColorPrimaries::BT601 => CP::Bt601,
+        ColorPrimaries::BT2020 => CP::Bt2020,
+        ColorPrimaries::SMPTE431 => CP::DciP3,
+        ColorPrimaries::SMPTE432 => CP::DisplayP3,
+        ColorPrimaries::BT470M
+        | ColorPrimaries::BT470BG
+        | ColorPrimaries::SMPTE240
+        | ColorPrimaries::GenericFilm
+        | ColorPrimaries::XYZ
+        | ColorPrimaries::EBU3213 => CP::Unspecified,
     }
 }
 
