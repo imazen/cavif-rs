@@ -474,3 +474,205 @@ fn test_libavif_quality_produces_expected_quantizers() {
         "libavif Q70 ({}) should be larger than old Q70 ({})",
         r70.avif_file.len(), old70.avif_file.len());
 }
+
+#[test]
+fn default_encoder_omits_colr_box() {
+    // avif-serialize skips the colr box when all values match defaults
+    // (BT.709 primaries, sRGB transfer, BT.601 matrix, full range).
+    // This is correct: the AV1 bitstream already carries the color info,
+    // and decoders can infer the defaults.
+    let img = imgref::ImgVec::new(vec![RGB8::new(128, 128, 128); 64 * 64], 64, 64);
+
+    let result = Encoder::new()
+        .with_quality(50.0)
+        .with_speed(10)
+        .with_num_threads(Some(1))
+        .encode_rgb(img.as_ref())
+        .unwrap();
+
+    let parser = zenavif_parse::AvifParser::from_owned(result.avif_file).unwrap();
+    // Default CICP matches avif-serialize's ColrBox::default(), so no colr box is written
+    assert!(parser.color_info().is_none(),
+        "default encoder should omit colr box (defaults match avif-serialize)");
+
+    // The AV1 bitstream still carries the correct values
+    let md = parser.primary_metadata().unwrap();
+    assert_eq!(md.bit_depth, 10, "default depth should be 10-bit");
+}
+
+#[test]
+fn pq_bt2020_signals_correct_cicp() {
+    let img = imgref::ImgVec::new(vec![RGB8::new(128, 64, 200); 64 * 64], 64, 64);
+
+    let result = Encoder::new()
+        .with_quality(50.0)
+        .with_speed(10)
+        .with_num_threads(Some(1))
+        .with_color_primaries(ColorPrimaries::BT2020)
+        .with_transfer_characteristics(TransferCharacteristics::SMPTE2084)
+        .encode_rgb(img.as_ref())
+        .unwrap();
+
+    let parser = zenavif_parse::AvifParser::from_owned(result.avif_file).unwrap();
+    let color = parser.color_info().expect("colr box should be present");
+    match color {
+        zenavif_parse::ColorInformation::Nclx {
+            color_primaries,
+            transfer_characteristics,
+            full_range,
+            ..
+        } => {
+            assert_eq!(*color_primaries, 9, "should be BT.2020 (9)");
+            assert_eq!(*transfer_characteristics, 16, "should be PQ/SMPTE2084 (16)");
+            assert!(*full_range, "should default to full range");
+        }
+        _ => panic!("expected nclx"),
+    }
+}
+
+#[test]
+fn hlg_display_p3_signals_correct_cicp() {
+    let img = imgref::ImgVec::new(vec![RGB8::new(200, 100, 50); 64 * 64], 64, 64);
+
+    let result = Encoder::new()
+        .with_quality(50.0)
+        .with_speed(10)
+        .with_num_threads(Some(1))
+        .with_color_primaries(ColorPrimaries::SMPTE432)
+        .with_transfer_characteristics(TransferCharacteristics::HLG)
+        .encode_rgb(img.as_ref())
+        .unwrap();
+
+    let parser = zenavif_parse::AvifParser::from_owned(result.avif_file).unwrap();
+    let color = parser.color_info().expect("colr box should be present");
+    match color {
+        zenavif_parse::ColorInformation::Nclx {
+            color_primaries,
+            transfer_characteristics,
+            ..
+        } => {
+            assert_eq!(*color_primaries, 12, "should be Display P3 / SMPTE432 (12)");
+            assert_eq!(*transfer_characteristics, 18, "should be HLG (18)");
+        }
+        _ => panic!("expected nclx"),
+    }
+}
+
+#[test]
+fn limited_range_signals_correctly() {
+    let img = imgref::ImgVec::new(vec![RGB8::new(128, 128, 128); 64 * 64], 64, 64);
+
+    let result = Encoder::new()
+        .with_quality(50.0)
+        .with_speed(10)
+        .with_num_threads(Some(1))
+        .with_pixel_range(PixelRange::Limited)
+        .encode_rgb(img.as_ref())
+        .unwrap();
+
+    let parser = zenavif_parse::AvifParser::from_owned(result.avif_file).unwrap();
+    let color = parser.color_info().expect("colr box should be present");
+    match color {
+        zenavif_parse::ColorInformation::Nclx { full_range, .. } => {
+            assert!(!*full_range, "should be limited range");
+        }
+        _ => panic!("expected nclx"),
+    }
+}
+
+#[test]
+fn twelve_bit_depth_encodes() {
+    let img = imgref::ImgVec::new(vec![RGB8::new(128, 64, 200); 64 * 64], 64, 64);
+
+    let result = Encoder::new()
+        .with_quality(50.0)
+        .with_speed(10)
+        .with_num_threads(Some(1))
+        .with_bit_depth(BitDepth::Twelve)
+        .encode_rgb(img.as_ref())
+        .unwrap();
+
+    assert!(result.color_byte_size > 0);
+
+    let parser = zenavif_parse::AvifParser::from_owned(result.avif_file).unwrap();
+    let md = parser.primary_metadata().unwrap();
+    assert_eq!(md.bit_depth, 12, "should be 12-bit");
+}
+
+#[test]
+fn twelve_bit_rgba_encodes() {
+    let img = imgref::ImgVec::new((0..64u32).flat_map(|y| (0..64u32).map(move |x| {
+        RGBA8::new((x * 4) as u8, (y * 4) as u8, 128, ((x + y) * 2) as u8)
+    })).collect::<Vec<_>>(), 64, 64);
+
+    let result = Encoder::new()
+        .with_quality(50.0)
+        .with_speed(10)
+        .with_num_threads(Some(1))
+        .with_bit_depth(BitDepth::Twelve)
+        .encode_rgba(img.as_ref())
+        .unwrap();
+
+    assert!(result.color_byte_size > 0);
+    assert!(result.alpha_byte_size > 0, "should have alpha");
+
+    let parser = zenavif_parse::AvifParser::from_owned(result.avif_file).unwrap();
+    let md = parser.primary_metadata().unwrap();
+    assert_eq!(md.bit_depth, 12);
+}
+
+#[test]
+fn hdr10_full_pipeline() {
+    // Simulates an HDR10 encode: PQ transfer, BT.2020 primaries, 10-bit,
+    // with mastering display and content light level metadata.
+    let img = imgref::ImgVec::new(vec![RGB8::new(128, 64, 200); 64 * 64], 64, 64);
+
+    let result = Encoder::new()
+        .with_quality(50.0)
+        .with_speed(10)
+        .with_num_threads(Some(1))
+        .with_color_primaries(ColorPrimaries::BT2020)
+        .with_transfer_characteristics(TransferCharacteristics::SMPTE2084)
+        .with_bit_depth(BitDepth::Ten)
+        .with_mastering_display(MasteringDisplay {
+            primaries: [
+                ChromaticityPoint { x: 13250, y: 34500 }, // green
+                ChromaticityPoint { x: 7500,  y: 3000 },  // blue
+                ChromaticityPoint { x: 34000, y: 16000 }, // red
+            ],
+            white_point: ChromaticityPoint { x: 15635, y: 16450 }, // D65
+            max_luminance: 10000000,  // 10000 cd/m² in 24.8 fixed point
+            min_luminance: 50,        // ~0.0003 cd/m² in 18.14 fixed point
+        })
+        .with_content_light(ContentLight {
+            max_content_light_level: 1000,
+            max_frame_average_light_level: 400,
+        })
+        .encode_rgb(img.as_ref())
+        .unwrap();
+
+    let parser = zenavif_parse::AvifParser::from_owned(result.avif_file).unwrap();
+
+    // Verify CICP in container colr box
+    let color = parser.color_info().expect("colr box should be present");
+    match color {
+        zenavif_parse::ColorInformation::Nclx {
+            color_primaries,
+            transfer_characteristics,
+            ..
+        } => {
+            assert_eq!(*color_primaries, 9, "BT.2020");
+            assert_eq!(*transfer_characteristics, 16, "PQ");
+        }
+        _ => panic!("expected nclx"),
+    }
+
+    // Verify bit depth in AV1 sequence header
+    let md = parser.primary_metadata().unwrap();
+    assert_eq!(md.bit_depth, 10);
+
+    // Note: mastering_display and content_light are embedded in the AV1
+    // bitstream by rav1e but avif-serialize 0.8.x does not write the
+    // ISOBMFF mdcv/clli property boxes. Container-level HDR metadata
+    // would require an avif-serialize upgrade.
+}

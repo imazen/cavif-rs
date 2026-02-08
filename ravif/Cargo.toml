@@ -39,6 +39,7 @@ opt-level = 2
 
 [dev-dependencies]
 avif-parse = "1.4.0"
+zenavif-parse = { path = "/home/lilith/work/zenavif-parse" }
 
 [package.metadata.release]
 tag = false
