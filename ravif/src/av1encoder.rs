@@ -135,6 +135,21 @@ pub struct Encoder<'exif_slice> {
     mastering_display: Option<MasteringDisplay>,
     /// HDR content light level metadata (CEA-861.3)
     content_light: Option<ContentLight>,
+    /// Enable AV1 quantization matrices (imazen/rav1e fork)
+    #[cfg(feature = "imazen")]
+    enable_qm: bool,
+    /// Enable variance adaptive quantization (imazen/rav1e fork)
+    #[cfg(feature = "imazen")]
+    enable_vaq: bool,
+    /// VAQ strength 0.0–4.0 (imazen/rav1e fork)
+    #[cfg(feature = "imazen")]
+    vaq_strength: f64,
+    /// Use Tune::StillImage instead of Tune::Psychovisual (imazen/rav1e fork)
+    #[cfg(feature = "imazen")]
+    tune_still_image: bool,
+    /// Mathematically lossless encoding (quantizer=0) (imazen/rav1e fork)
+    #[cfg(feature = "imazen")]
+    lossless: bool,
 }
 
 impl<'exif_slice> Default for Encoder<'exif_slice> {
@@ -157,6 +172,16 @@ impl<'exif_slice> Default for Encoder<'exif_slice> {
             pixel_range: None,
             mastering_display: None,
             content_light: None,
+            #[cfg(feature = "imazen")]
+            enable_qm: true,
+            #[cfg(feature = "imazen")]
+            enable_vaq: true,
+            #[cfg(feature = "imazen")]
+            vaq_strength: 0.5,
+            #[cfg(feature = "imazen")]
+            tune_still_image: true,
+            #[cfg(feature = "imazen")]
+            lossless: false,
         }
     }
 }
@@ -418,6 +443,56 @@ impl<'exif_slice> Encoder<'exif_slice> {
     #[must_use]
     pub fn with_content_light(mut self, cl: ContentLight) -> Self {
         self.content_light = Some(cl);
+        self
+    }
+
+    /// Enable/disable AV1 quantization matrices (imazen/rav1e fork).
+    ///
+    /// QM applies frequency-dependent quantization weights based on contrast
+    /// sensitivity, giving ~10% BD-rate improvement for photographic content.
+    /// Default: enabled.
+    #[cfg(feature = "imazen")]
+    #[inline(always)]
+    #[must_use]
+    pub fn with_qm(mut self, enable: bool) -> Self {
+        self.enable_qm = enable;
+        self
+    }
+
+    /// Enable/disable variance adaptive quantization (imazen/rav1e fork).
+    ///
+    /// VAQ allocates more bits to smooth regions where artifacts are visible
+    /// and fewer bits to textured regions. Default: enabled, strength 0.5.
+    #[cfg(feature = "imazen")]
+    #[inline(always)]
+    #[must_use]
+    pub fn with_vaq(mut self, enable: bool, strength: f64) -> Self {
+        self.enable_vaq = enable;
+        self.vaq_strength = strength;
+        self
+    }
+
+    /// Enable/disable still-image tuning (imazen/rav1e fork).
+    ///
+    /// Uses `Tune::StillImage` which applies perceptual distortion metric with
+    /// activity masking plus reduced CDEF/deblock for detail preservation.
+    /// Default: enabled.
+    #[cfg(feature = "imazen")]
+    #[inline(always)]
+    #[must_use]
+    pub fn with_still_image_tuning(mut self, enable: bool) -> Self {
+        self.tune_still_image = enable;
+        self
+    }
+
+    /// Enable/disable mathematically lossless encoding (imazen/rav1e fork).
+    ///
+    /// Sets quantizer to 0 for lossless output. Default: disabled.
+    #[cfg(feature = "imazen")]
+    #[inline(always)]
+    #[must_use]
+    pub fn with_lossless(mut self, lossless: bool) -> Self {
+        self.lossless = lossless;
         self
     }
 }
@@ -691,6 +766,16 @@ impl Encoder<'_> {
                     color_description,
                     mastering_display,
                     content_light,
+                    #[cfg(feature = "imazen")]
+                    enable_qm: self.enable_qm,
+                    #[cfg(feature = "imazen")]
+                    enable_vaq: self.enable_vaq,
+                    #[cfg(feature = "imazen")]
+                    vaq_strength: self.vaq_strength,
+                    #[cfg(feature = "imazen")]
+                    tune_still_image: self.tune_still_image,
+                    #[cfg(feature = "imazen")]
+                    lossless: self.lossless,
                 },
                 cancel_token,
                 deadline,
@@ -718,6 +803,16 @@ impl Encoder<'_> {
                         color_description: None,
                         mastering_display: None,
                         content_light: None,
+                        #[cfg(feature = "imazen")]
+                        enable_qm: false,
+                        #[cfg(feature = "imazen")]
+                        enable_vaq: false,
+                        #[cfg(feature = "imazen")]
+                        vaq_strength: 1.0,
+                        #[cfg(feature = "imazen")]
+                        tune_still_image: false,
+                        #[cfg(feature = "imazen")]
+                        lossless: self.lossless,
                     },
                     cancel_token_alpha,
                     deadline,
@@ -993,6 +1088,16 @@ struct Av1EncodeConfig {
     pub color_description: Option<ColorDescription>,
     pub mastering_display: Option<MasteringDisplay>,
     pub content_light: Option<ContentLight>,
+    #[cfg(feature = "imazen")]
+    pub enable_qm: bool,
+    #[cfg(feature = "imazen")]
+    pub enable_vaq: bool,
+    #[cfg(feature = "imazen")]
+    pub vaq_strength: f64,
+    #[cfg(feature = "imazen")]
+    pub tune_still_image: bool,
+    #[cfg(feature = "imazen")]
+    pub lossless: bool,
 }
 
 fn rav1e_config(p: &Av1EncodeConfig) -> Config {
@@ -1024,15 +1129,48 @@ fn rav1e_config(p: &Av1EncodeConfig) -> Config {
         max_key_frame_interval: 0,
         reservoir_frame_delay: None,
         low_latency: false,
-        quantizer: p.quantizer,
-        min_quantizer: p.quantizer as _,
+        quantizer: {
+            #[cfg(feature = "imazen")]
+            { if p.lossless { 0 } else { p.quantizer } }
+            #[cfg(not(feature = "imazen"))]
+            { p.quantizer }
+        },
+        min_quantizer: {
+            #[cfg(feature = "imazen")]
+            { if p.lossless { 0 } else { p.quantizer as _ } }
+            #[cfg(not(feature = "imazen"))]
+            { p.quantizer as _ }
+        },
         bitrate: 0,
-        tune: Tune::Psychovisual,
+        tune: {
+            #[cfg(feature = "imazen")]
+            { if p.tune_still_image { Tune::StillImage } else { Tune::Psychovisual } }
+            #[cfg(not(feature = "imazen"))]
+            { Tune::Psychovisual }
+        },
         tile_cols: 0,
         tile_rows: 0,
         tiles,
         film_grain_params: None,
         level_idx: None,
+        enable_qm: {
+            #[cfg(feature = "imazen")]
+            { p.enable_qm }
+            #[cfg(not(feature = "imazen"))]
+            { false }
+        },
+        enable_vaq: {
+            #[cfg(feature = "imazen")]
+            { p.enable_vaq }
+            #[cfg(not(feature = "imazen"))]
+            { false }
+        },
+        vaq_strength: {
+            #[cfg(feature = "imazen")]
+            { p.vaq_strength }
+            #[cfg(not(feature = "imazen"))]
+            { 1.0 }
+        },
         speed_settings,
     });
 
