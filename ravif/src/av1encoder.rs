@@ -175,11 +175,11 @@ impl<'exif_slice> Default for Encoder<'exif_slice> {
             #[cfg(feature = "imazen")]
             enable_qm: true,
             #[cfg(feature = "imazen")]
-            enable_vaq: true,
+            enable_vaq: false,
             #[cfg(feature = "imazen")]
-            vaq_strength: 0.5,
+            vaq_strength: 1.0,
             #[cfg(feature = "imazen")]
-            tune_still_image: true,
+            tune_still_image: false,
             #[cfg(feature = "imazen")]
             lossless: false,
         }
