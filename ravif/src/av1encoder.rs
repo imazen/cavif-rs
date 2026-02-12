@@ -150,6 +150,9 @@ pub struct Encoder<'exif_slice> {
     /// Mathematically lossless encoding (quantizer=0) (imazen/rav1e fork)
     #[cfg(feature = "imazen")]
     lossless: bool,
+    /// Segmentation boost power (1.0 = off, >1.0 = wider QP deltas)
+    #[cfg(feature = "imazen")]
+    seg_boost: f64,
     /// Override CDEF on/off (None = use speed preset default)
     #[cfg(feature = "imazen")]
     override_cdef: Option<bool>,
@@ -188,6 +191,8 @@ impl<'exif_slice> Default for Encoder<'exif_slice> {
             tune_still_image: false,
             #[cfg(feature = "imazen")]
             lossless: false,
+            #[cfg(feature = "imazen")]
+            seg_boost: 1.0,
             #[cfg(feature = "imazen")]
             override_cdef: None,
             #[cfg(feature = "imazen")]
@@ -506,6 +511,15 @@ impl<'exif_slice> Encoder<'exif_slice> {
         self
     }
 
+    /// Set segmentation boost power (1.0 = off, >1.0 = wider QP deltas).
+    /// Amplifies the dynamic range of segmentation independently of RDO.
+    #[cfg(feature = "imazen")]
+    #[must_use]
+    pub fn with_seg_boost(mut self, boost: f64) -> Self {
+        self.seg_boost = boost;
+        self
+    }
+
     /// Override CDEF enable/disable (None = use speed preset default).
     #[cfg(feature = "imazen")]
     #[must_use]
@@ -813,6 +827,8 @@ impl Encoder<'_> {
                     #[cfg(feature = "imazen")]
                     lossless: self.lossless,
                     #[cfg(feature = "imazen")]
+                    seg_boost: self.seg_boost,
+                    #[cfg(feature = "imazen")]
                     override_cdef,
                     #[cfg(feature = "imazen")]
                     override_rdo_tx_decision,
@@ -853,6 +869,8 @@ impl Encoder<'_> {
                         tune_still_image: false,
                         #[cfg(feature = "imazen")]
                         lossless: self.lossless,
+                        #[cfg(feature = "imazen")]
+                        seg_boost: 1.0,
                         #[cfg(feature = "imazen")]
                         override_cdef: None,
                         #[cfg(feature = "imazen")]
@@ -1143,6 +1161,8 @@ struct Av1EncodeConfig {
     #[cfg(feature = "imazen")]
     pub lossless: bool,
     #[cfg(feature = "imazen")]
+    pub seg_boost: f64,
+    #[cfg(feature = "imazen")]
     pub override_cdef: Option<bool>,
     #[cfg(feature = "imazen")]
     pub override_rdo_tx_decision: Option<bool>,
@@ -1216,6 +1236,12 @@ fn rav1e_config(p: &Av1EncodeConfig) -> Config {
         vaq_strength: {
             #[cfg(feature = "imazen")]
             { p.vaq_strength }
+            #[cfg(not(feature = "imazen"))]
+            { 1.0 }
+        },
+        seg_boost: {
+            #[cfg(feature = "imazen")]
+            { p.seg_boost }
             #[cfg(not(feature = "imazen"))]
             { 1.0 }
         },
