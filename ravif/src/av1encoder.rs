@@ -159,6 +159,21 @@ pub struct Encoder<'exif_slice> {
     /// Override rdo_tx_decision on/off (None = use speed preset default)
     #[cfg(feature = "imazen")]
     override_rdo_tx_decision: Option<bool>,
+    /// Override SGR complexity to Full (all 16 parameter sets vs 8 at speed ≥5)
+    #[cfg(feature = "imazen")]
+    override_sgr_complexity: Option<bool>,
+    /// Override LRU on skip (search loop restoration on skip blocks)
+    #[cfg(feature = "imazen")]
+    override_lru_on_skip: Option<bool>,
+    /// Override segmentation to Complex (k-means vs Simple at speed ≥3)
+    #[cfg(feature = "imazen")]
+    override_segmentation_complex: Option<bool>,
+    /// Override bottom-up partition search (vs top-down at speed ≥4)
+    #[cfg(feature = "imazen")]
+    override_encode_bottomup: Option<bool>,
+    /// Enable trellis quantization (Viterbi DP coefficient optimization)
+    #[cfg(feature = "imazen")]
+    enable_trellis: bool,
 }
 
 impl<'exif_slice> Default for Encoder<'exif_slice> {
@@ -197,6 +212,16 @@ impl<'exif_slice> Default for Encoder<'exif_slice> {
             override_cdef: None,
             #[cfg(feature = "imazen")]
             override_rdo_tx_decision: None,
+            #[cfg(feature = "imazen")]
+            override_sgr_complexity: None,
+            #[cfg(feature = "imazen")]
+            override_lru_on_skip: None,
+            #[cfg(feature = "imazen")]
+            override_segmentation_complex: None,
+            #[cfg(feature = "imazen")]
+            override_encode_bottomup: None,
+            #[cfg(feature = "imazen")]
+            enable_trellis: false,
         }
     }
 }
@@ -535,6 +560,49 @@ impl<'exif_slice> Encoder<'exif_slice> {
         self.override_rdo_tx_decision = enable;
         self
     }
+
+    /// Override SGR complexity to Full (all 16 parameter sets).
+    /// At speed ≥5, rav1e uses Reduced (8 sets). Full searches all 16.
+    #[cfg(feature = "imazen")]
+    #[must_use]
+    pub fn with_sgr_full(mut self, enable: Option<bool>) -> Self {
+        self.override_sgr_complexity = enable;
+        self
+    }
+
+    /// Override LRU on skip (search loop restoration on blocks with no coefficients).
+    /// Off by default at speed ≥1.
+    #[cfg(feature = "imazen")]
+    #[must_use]
+    pub fn with_lru_on_skip(mut self, enable: Option<bool>) -> Self {
+        self.override_lru_on_skip = enable;
+        self
+    }
+
+    /// Override segmentation to Complex (k-means, vs Simple at speed ≥3).
+    #[cfg(feature = "imazen")]
+    #[must_use]
+    pub fn with_segmentation_complex(mut self, enable: Option<bool>) -> Self {
+        self.override_segmentation_complex = enable;
+        self
+    }
+
+    /// Override bottom-up partition search (off at speed ≥4).
+    #[cfg(feature = "imazen")]
+    #[must_use]
+    pub fn with_encode_bottomup(mut self, enable: Option<bool>) -> Self {
+        self.override_encode_bottomup = enable;
+        self
+    }
+
+    /// Enable trellis quantization (Viterbi DP coefficient optimization).
+    /// Optimizes coefficient levels jointly using rate-distortion cost.
+    #[cfg(feature = "imazen")]
+    #[must_use]
+    pub fn with_trellis(mut self, enable: bool) -> Self {
+        self.enable_trellis = enable;
+        self
+    }
 }
 
 /// Once done with config, call one of the `encode_*` functions
@@ -796,12 +864,26 @@ impl Encoder<'_> {
         let override_cdef = self.override_cdef;
         #[cfg(feature = "imazen")]
         let override_rdo_tx_decision = self.override_rdo_tx_decision;
+        #[cfg(feature = "imazen")]
+        let override_sgr_complexity = self.override_sgr_complexity;
+        #[cfg(feature = "imazen")]
+        let override_lru_on_skip = self.override_lru_on_skip;
+        #[cfg(feature = "imazen")]
+        let override_segmentation_complex = self.override_segmentation_complex;
+        #[cfg(feature = "imazen")]
+        let override_encode_bottomup = self.override_encode_bottomup;
         let encode_color = move || {
             let mut speed = SpeedTweaks::from_my_preset(self.speed, self.quantizer);
             #[cfg(feature = "imazen")]
             {
                 if let Some(v) = override_cdef { speed.cdef = Some(v); }
                 if let Some(v) = override_rdo_tx_decision { speed.rdo_tx_decision = Some(v); }
+                if let Some(v) = override_sgr_complexity { speed.sgr_complexity_full = Some(v); }
+                if let Some(v) = override_lru_on_skip { speed.lru_on_skip = Some(v); }
+                if let Some(v) = override_segmentation_complex {
+                    speed.segmentation = Some(if v { SegmentationLevel::Complex } else { SegmentationLevel::Simple });
+                }
+                if let Some(v) = override_encode_bottomup { speed.encode_bottomup = Some(v); }
             }
             encode_to_av1::<P>(
                 &Av1EncodeConfig {
@@ -832,6 +914,8 @@ impl Encoder<'_> {
                     override_cdef,
                     #[cfg(feature = "imazen")]
                     override_rdo_tx_decision,
+                    #[cfg(feature = "imazen")]
+                    enable_trellis: self.enable_trellis,
                 },
                 cancel_token,
                 deadline,
@@ -875,6 +959,8 @@ impl Encoder<'_> {
                         override_cdef: None,
                         #[cfg(feature = "imazen")]
                         override_rdo_tx_decision: None,
+                        #[cfg(feature = "imazen")]
+                        enable_trellis: false,
                     },
                     cancel_token_alpha,
                     deadline,
@@ -1166,6 +1252,8 @@ struct Av1EncodeConfig {
     pub override_cdef: Option<bool>,
     #[cfg(feature = "imazen")]
     pub override_rdo_tx_decision: Option<bool>,
+    #[cfg(feature = "imazen")]
+    pub enable_trellis: bool,
 }
 
 fn rav1e_config(p: &Av1EncodeConfig) -> Config {
@@ -1244,6 +1332,12 @@ fn rav1e_config(p: &Av1EncodeConfig) -> Config {
             { p.seg_boost }
             #[cfg(not(feature = "imazen"))]
             { 1.0 }
+        },
+        enable_trellis: {
+            #[cfg(feature = "imazen")]
+            { p.enable_trellis }
+            #[cfg(not(feature = "imazen"))]
+            { false }
         },
         speed_settings,
     });
