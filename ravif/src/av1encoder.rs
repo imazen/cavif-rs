@@ -150,6 +150,12 @@ pub struct Encoder<'exif_slice> {
     /// Mathematically lossless encoding (quantizer=0) (imazen/rav1e fork)
     #[cfg(feature = "imazen")]
     lossless: bool,
+    /// Override CDEF on/off (None = use speed preset default)
+    #[cfg(feature = "imazen")]
+    override_cdef: Option<bool>,
+    /// Override rdo_tx_decision on/off (None = use speed preset default)
+    #[cfg(feature = "imazen")]
+    override_rdo_tx_decision: Option<bool>,
 }
 
 impl<'exif_slice> Default for Encoder<'exif_slice> {
@@ -182,6 +188,10 @@ impl<'exif_slice> Default for Encoder<'exif_slice> {
             tune_still_image: false,
             #[cfg(feature = "imazen")]
             lossless: false,
+            #[cfg(feature = "imazen")]
+            override_cdef: None,
+            #[cfg(feature = "imazen")]
+            override_rdo_tx_decision: None,
         }
     }
 }
@@ -495,6 +505,22 @@ impl<'exif_slice> Encoder<'exif_slice> {
         self.lossless = lossless;
         self
     }
+
+    /// Override CDEF enable/disable (None = use speed preset default).
+    #[cfg(feature = "imazen")]
+    #[must_use]
+    pub fn with_cdef(mut self, enable: Option<bool>) -> Self {
+        self.override_cdef = enable;
+        self
+    }
+
+    /// Override rdo_tx_decision enable/disable (None = use speed preset default).
+    #[cfg(feature = "imazen")]
+    #[must_use]
+    pub fn with_rdo_tx_decision(mut self, enable: Option<bool>) -> Self {
+        self.override_rdo_tx_decision = enable;
+        self
+    }
 }
 
 /// Once done with config, call one of the `encode_*` functions
@@ -752,14 +778,24 @@ impl Encoder<'_> {
         let use_420 = self.chroma_subsampling == ChromaSubsampling::Yuv420;
         let mastering_display = self.mastering_display;
         let content_light = self.content_light;
+        #[cfg(feature = "imazen")]
+        let override_cdef = self.override_cdef;
+        #[cfg(feature = "imazen")]
+        let override_rdo_tx_decision = self.override_rdo_tx_decision;
         let encode_color = move || {
+            let mut speed = SpeedTweaks::from_my_preset(self.speed, self.quantizer);
+            #[cfg(feature = "imazen")]
+            {
+                if let Some(v) = override_cdef { speed.cdef = Some(v); }
+                if let Some(v) = override_rdo_tx_decision { speed.rdo_tx_decision = Some(v); }
+            }
             encode_to_av1::<P>(
                 &Av1EncodeConfig {
                     width,
                     height,
                     bit_depth: input_pixels_bit_depth.into(),
                     quantizer: self.quantizer.into(),
-                    speed: SpeedTweaks::from_my_preset(self.speed, self.quantizer),
+                    speed,
                     threads,
                     pixel_range: color_pixel_range,
                     chroma_sampling,
@@ -776,6 +812,10 @@ impl Encoder<'_> {
                     tune_still_image: self.tune_still_image,
                     #[cfg(feature = "imazen")]
                     lossless: self.lossless,
+                    #[cfg(feature = "imazen")]
+                    override_cdef,
+                    #[cfg(feature = "imazen")]
+                    override_rdo_tx_decision,
                 },
                 cancel_token,
                 deadline,
@@ -813,6 +853,10 @@ impl Encoder<'_> {
                         tune_still_image: false,
                         #[cfg(feature = "imazen")]
                         lossless: self.lossless,
+                        #[cfg(feature = "imazen")]
+                        override_cdef: None,
+                        #[cfg(feature = "imazen")]
+                        override_rdo_tx_decision: None,
                     },
                     cancel_token_alpha,
                     deadline,
@@ -1098,6 +1142,10 @@ struct Av1EncodeConfig {
     pub tune_still_image: bool,
     #[cfg(feature = "imazen")]
     pub lossless: bool,
+    #[cfg(feature = "imazen")]
+    pub override_cdef: Option<bool>,
+    #[cfg(feature = "imazen")]
+    pub override_rdo_tx_decision: Option<bool>,
 }
 
 fn rav1e_config(p: &Av1EncodeConfig) -> Config {
