@@ -6,7 +6,7 @@ use crate::error::Error;
 #[cfg(not(feature = "threading"))]
 use crate::rayoff as rayon;
 use imgref::{Img, ImgVec};
-use rav1e::prelude::*;
+use zenrav1e::prelude::*;
 use rgb::{RGB8, RGBA8};
 
 /// Helper to check cancellation with minimal overhead
@@ -823,7 +823,7 @@ impl Encoder<'_> {
 
     #[inline(never)]
     #[allow(clippy::too_many_arguments)]
-    fn encode_raw_planes_internal<P: rav1e::Pixel + Default>(
+    fn encode_raw_planes_internal<P: zenrav1e::Pixel + Default>(
         &self, width: usize, height: usize,
         planes: impl IntoIterator<Item = [P; 3]> + Send,
         alpha: Option<impl IntoIterator<Item = P> + Send>,
@@ -1339,6 +1339,7 @@ fn rav1e_config(p: &Av1EncodeConfig) -> Config {
             #[cfg(not(feature = "imazen"))]
             { false }
         },
+        max_pixel_count: u64::MAX,
         speed_settings,
     });
 
@@ -1394,7 +1395,7 @@ fn map_color_primaries(cp: ColorPrimaries) -> avif_serialize::constants::ColorPr
     }
 }
 
-fn init_frame_3<P: rav1e::Pixel + Default>(
+fn init_frame_3<P: zenrav1e::Pixel + Default>(
     width: usize,
     height: usize,
     planes: impl IntoIterator<Item = [P; 3]> + Send,
@@ -1434,7 +1435,7 @@ fn init_frame_3<P: rav1e::Pixel + Default>(
 
 /// Initialize a frame with 4:2:0 chroma subsampling.
 /// Luma is written at full resolution, chroma is box-filtered to half resolution.
-fn init_frame_3_420<P: rav1e::Pixel + Default>(
+fn init_frame_3_420<P: zenrav1e::Pixel + Default>(
     width: usize,
     height: usize,
     planes: impl IntoIterator<Item = [P; 3]> + Send,
@@ -1518,7 +1519,7 @@ fn init_frame_3_420<P: rav1e::Pixel + Default>(
     Ok(())
 }
 
-fn init_frame_1<P: rav1e::Pixel + Default>(
+fn init_frame_1<P: zenrav1e::Pixel + Default>(
     width: usize,
     height: usize,
     planes: impl IntoIterator<Item = P> + Send,
@@ -1547,7 +1548,7 @@ fn init_frame_1<P: rav1e::Pixel + Default>(
 }
 
 #[inline(never)]
-fn encode_to_av1<P: rav1e::Pixel>(
+fn encode_to_av1<P: zenrav1e::Pixel>(
     p: &Av1EncodeConfig,
     cancel_token: Option<&CancellationToken>,
     deadline: Option<std::time::Instant>,

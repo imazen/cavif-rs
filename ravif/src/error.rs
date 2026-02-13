@@ -22,8 +22,8 @@ quick_error! {
         }
         EncodingError(e: EncodingErrorDetail) {
             display("Encoding error reported by rav1e")
-            from(_e: rav1e::InvalidConfig) -> (EncodingErrorDetail)
-            from(_e: rav1e::EncoderStatus) -> (EncodingErrorDetail)
+            from(_e: zenrav1e::InvalidConfig) -> (EncodingErrorDetail)
+            from(_e: zenrav1e::EncoderStatus) -> (EncodingErrorDetail)
         }
     }
 }
