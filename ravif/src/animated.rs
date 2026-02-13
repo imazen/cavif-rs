@@ -530,6 +530,7 @@ fn write_fullbox(out: &mut Vec<u8>, version: u8, flags: u32) {
 }
 
 const STCO_PLACEHOLDER: u32 = 0xDEAD_BEEF;
+const ILOC_PLACEHOLDER: u32 = 0xDEAD_BEE0;
 
 fn mux_animated_avif(
     width: u32,
@@ -544,6 +545,7 @@ fn mux_animated_avif(
     let mut out = Vec::new();
 
     write_ftyp(&mut out);
+    write_meta(&mut out, width, height, &seq_header, frames[0].len() as u32, false);
 
     let moov_pos = begin_box(&mut out, b"moov");
     write_mvhd(&mut out, timescale, total_duration, 2);
@@ -557,7 +559,7 @@ fn mux_animated_avif(
     }
     end_box(&mut out, mdat_pos);
 
-    patch_stco_placeholders(&mut out, &[mdat_data_start as u32]);
+    patch_offset_placeholders(&mut out, &[mdat_data_start as u32], mdat_data_start as u32);
 
     out
 }
@@ -577,6 +579,7 @@ fn mux_animated_avif_with_alpha(
     let mut out = Vec::new();
 
     write_ftyp(&mut out);
+    write_meta(&mut out, width, height, &color_seq_header, color_frames[0].len() as u32, false);
 
     let moov_pos = begin_box(&mut out, b"moov");
     write_mvhd(&mut out, timescale, total_duration, 3);
@@ -595,7 +598,7 @@ fn mux_animated_avif_with_alpha(
     }
     end_box(&mut out, mdat_pos);
 
-    patch_stco_placeholders(&mut out, &[mdat_data_start as u32, alpha_data_start as u32]);
+    patch_offset_placeholders(&mut out, &[mdat_data_start as u32, alpha_data_start as u32], mdat_data_start as u32);
 
     out
 }
@@ -606,6 +609,126 @@ fn write_ftyp(out: &mut Vec<u8>) {
     write_u32(out, 0);
     out.extend_from_slice(b"avisavifmif1miafiso8");
     end_box(out, pos);
+}
+
+/// Write a minimal `meta` box for AVIF sequence interoperability.
+///
+/// Declares item 1 as the primary item (av01) with ispe + av1C properties.
+/// The iloc extent offset uses a placeholder patched after mdat is written.
+fn write_meta(
+    out: &mut Vec<u8>,
+    width: u32,
+    height: u32,
+    seq_header: &[u8],
+    first_frame_len: u32,
+    is_alpha: bool,
+) {
+    let meta_pos = begin_box(out, b"meta");
+    write_fullbox(out, 0, 0);
+
+    // hdlr: handler = "pict"
+    {
+        let pos = begin_box(out, b"hdlr");
+        write_fullbox(out, 0, 0);
+        write_u32(out, 0); // pre_defined
+        out.extend_from_slice(b"pict");
+        out.extend_from_slice(&[0u8; 12]); // reserved
+        out.push(0); // name (null-terminated empty string)
+        end_box(out, pos);
+    }
+
+    // pitm: primary item ID = 1
+    {
+        let pos = begin_box(out, b"pitm");
+        write_fullbox(out, 0, 0);
+        write_u16(out, 1); // item_id
+        end_box(out, pos);
+    }
+
+    // iloc: item 1 location (offset placeholder, patched after mdat)
+    {
+        let pos = begin_box(out, b"iloc");
+        write_fullbox(out, 0, 0);
+        // offset_size=4, length_size=4, base_offset_size=0, reserved=0
+        out.push(0x44);
+        out.push(0x00);
+        write_u16(out, 1); // item_count
+        write_u16(out, 1); // item_id
+        write_u16(out, 0); // data_reference_index
+        write_u16(out, 1); // extent_count
+        write_u32(out, ILOC_PLACEHOLDER); // extent_offset (patched later)
+        write_u32(out, first_frame_len); // extent_length
+        end_box(out, pos);
+    }
+
+    // iinf: one infe entry for item 1
+    {
+        let iinf_pos = begin_box(out, b"iinf");
+        write_fullbox(out, 0, 0);
+        write_u16(out, 1); // entry_count
+
+        let infe_pos = begin_box(out, b"infe");
+        write_fullbox(out, 2, 0); // version 2 for item_type
+        write_u16(out, 1); // item_id
+        write_u16(out, 0); // item_protection_index
+        out.extend_from_slice(b"av01"); // item_type
+        out.push(0); // item_name (null-terminated empty)
+        end_box(out, infe_pos);
+
+        end_box(out, iinf_pos);
+    }
+
+    // iprp: item properties (ispe + av1C) associated with item 1
+    {
+        let iprp_pos = begin_box(out, b"iprp");
+
+        // ipco: property container
+        {
+            let ipco_pos = begin_box(out, b"ipco");
+
+            // Property 1: ispe (image spatial extents)
+            {
+                let pos = begin_box(out, b"ispe");
+                write_fullbox(out, 0, 0);
+                write_u32(out, width);
+                write_u32(out, height);
+                end_box(out, pos);
+            }
+
+            // Property 2: av1C (AV1 codec configuration)
+            {
+                let pos = begin_box(out, b"av1C");
+                out.push(0x81); // marker=1, version=1
+                out.push(0x04); // seq_profile=0, seq_level_idx=4
+                if is_alpha {
+                    out.push(0b0001_0110); // monochrome=1, chroma 4:2:0
+                } else {
+                    out.push(0b0000_1100); // monochrome=0, chroma 4:2:0
+                }
+                out.push(0x00); // no initial_presentation_delay
+                out.extend_from_slice(seq_header);
+                end_box(out, pos);
+            }
+
+            end_box(out, ipco_pos);
+        }
+
+        // ipma: associate properties with item 1
+        {
+            let pos = begin_box(out, b"ipma");
+            write_fullbox(out, 0, 0);
+            write_u32(out, 1); // entry_count
+            write_u16(out, 1); // item_id
+            out.push(2); // association_count
+            out.push(0x01); // essential=0, property_index=1 (ispe)
+            out.push(0x82); // essential=1, property_index=2 (av1C)
+            end_box(out, pos);
+        }
+
+        end_box(out, iprp_pos);
+    }
+
+    end_box(out, meta_pos);
 }
 
 fn write_mvhd(out: &mut Vec<u8>, timescale: u32, duration: u64, next_track_id: u32) {
@@ -854,15 +977,20 @@ fn write_track(
     end_box(out, trak_pos);
 }
 
-/// Find and replace STCO_PLACEHOLDER values with actual offsets
-fn patch_stco_placeholders(out: &mut Vec<u8>, offsets: &[u32]) {
-    let placeholder = STCO_PLACEHOLDER.to_be_bytes();
-    let mut offset_idx = 0;
+/// Find and replace placeholder values with actual offsets.
+/// Patches both STCO (track chunk offsets) and ILOC (item extent offsets).
+fn patch_offset_placeholders(out: &mut Vec<u8>, stco_offsets: &[u32], iloc_offset: u32) {
+    let stco_placeholder = STCO_PLACEHOLDER.to_be_bytes();
+    let iloc_placeholder = ILOC_PLACEHOLDER.to_be_bytes();
+    let mut stco_idx = 0;
     let mut i = 0;
-    while i + 4 <= out.len() && offset_idx < offsets.len() {
-        if out[i..i + 4] == placeholder {
-            out[i..i + 4].copy_from_slice(&offsets[offset_idx].to_be_bytes());
-            offset_idx += 1;
+    while i + 4 <= out.len() {
+        if stco_idx < stco_offsets.len() && out[i..i + 4] == stco_placeholder {
+            out[i..i + 4].copy_from_slice(&stco_offsets[stco_idx].to_be_bytes());
+            stco_idx += 1;
+            i += 4;
+        } else if out[i..i + 4] == iloc_placeholder {
+            out[i..i + 4].copy_from_slice(&iloc_offset.to_be_bytes());
             i += 4;
         } else {
             i += 1;
