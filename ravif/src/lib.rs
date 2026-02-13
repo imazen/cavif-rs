@@ -69,6 +69,7 @@
 //! # }
 
 mod av1encoder;
+mod animated;
 
 mod cancel;
 pub use cancel::CancellationToken;
@@ -81,6 +82,7 @@ pub use error::Error;
 #[deprecated = "Renamed to `ColorModel`"]
 pub type ColorSpace = ColorModel;
 
+pub use animated::{AnimFrame, AnimFrameRgba, EncodedAnimation};
 pub use av1encoder::{AlphaColorMode, BitDepth, ChromaSubsampling, EncodedImage, Encoder};
 #[doc(inline)]
 pub use zenrav1e::prelude::{

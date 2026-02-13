@@ -102,11 +102,11 @@ pub struct EncodedImage {
 #[derive(Debug, Clone)]
 pub struct Encoder<'exif_slice> {
     /// 0-255 scale
-    quantizer: u8,
+    pub(crate) quantizer: u8,
     /// 0-255 scale
-    alpha_quantizer: u8,
+    pub(crate) alpha_quantizer: u8,
     /// rav1e preset 1 (slow) 10 (fast but crappy)
-    speed: u8,
+    pub(crate) speed: u8,
     /// True if RGBA input has already been premultiplied. It inserts appropriate metadata.
     premultiplied_alpha: bool,
     /// Which pixel format to use in AVIF file. RGB tends to give larger files.
@@ -126,18 +126,18 @@ pub struct Encoder<'exif_slice> {
     /// Optional timeout duration for encoding
     timeout: Option<std::time::Duration>,
     /// Override color primaries (default: BT709 for sRGB)
-    color_primaries: Option<ColorPrimaries>,
+    pub(crate) color_primaries: Option<ColorPrimaries>,
     /// Override transfer characteristics (default: SRGB)
-    transfer_characteristics: Option<TransferCharacteristics>,
+    pub(crate) transfer_characteristics: Option<TransferCharacteristics>,
     /// Override pixel range (default: Full)
     pixel_range: Option<PixelRange>,
     /// HDR mastering display metadata (SMPTE ST 2086)
-    mastering_display: Option<MasteringDisplay>,
+    pub(crate) mastering_display: Option<MasteringDisplay>,
     /// HDR content light level metadata (CEA-861.3)
-    content_light: Option<ContentLight>,
+    pub(crate) content_light: Option<ContentLight>,
     /// Enable AV1 quantization matrices (imazen/rav1e fork)
     #[cfg(feature = "imazen")]
-    enable_qm: bool,
+    pub(crate) enable_qm: bool,
     /// Enable variance adaptive quantization (imazen/rav1e fork)
     #[cfg(feature = "imazen")]
     enable_vaq: bool,
@@ -1075,7 +1075,7 @@ fn rgb_to_8_bit_ycbcr(px: rgb::RGB<u8>, matrix: [f32; 3]) -> (u8, u8, u8) {
     (y as u8, u as u8, v as u8)
 }
 
-fn quality_to_quantizer(quality: f32) -> u8 {
+pub(crate) fn quality_to_quantizer(quality: f32) -> u8 {
     let q = quality.clamp(1., 100.) / 100.;
     let x = if q >= 0.70 {
         (1. - q) * 1.4          // Q70-100 → qindex 0-107
@@ -1088,7 +1088,7 @@ fn quality_to_quantizer(quality: f32) -> u8 {
 }
 
 #[derive(Debug, Copy, Clone)]
-struct SpeedTweaks {
+pub(crate) struct SpeedTweaks {
     pub speed_preset: u8,
 
     pub fast_deblock: Option<bool>,
