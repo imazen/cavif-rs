@@ -479,7 +479,7 @@ fn test_libavif_quality_produces_expected_quantizers() {
 
 #[test]
 fn default_encoder_omits_colr_box() {
-    // avif-serialize skips the colr box when all values match defaults
+    // zenavif-serialize skips the colr box when all values match defaults
     // (BT.709 primaries, sRGB transfer, BT.601 matrix, full range).
     // This is correct: the AV1 bitstream already carries the color info,
     // and decoders can infer the defaults.
@@ -493,9 +493,9 @@ fn default_encoder_omits_colr_box() {
         .unwrap();
 
     let parser = zenavif_parse::AvifParser::from_owned(result.avif_file).unwrap();
-    // Default CICP matches avif-serialize's ColrBox::default(), so no colr box is written
+    // Default CICP matches zenavif-serialize's ColrBox::default(), so no colr box is written
     assert!(parser.color_info().is_none(),
-        "default encoder should omit colr box (defaults match avif-serialize)");
+        "default encoder should omit colr box (defaults match zenavif-serialize)");
 
     // The AV1 bitstream still carries the correct values
     let md = parser.primary_metadata().unwrap();
@@ -674,7 +674,7 @@ fn hdr10_full_pipeline() {
     assert_eq!(md.bit_depth, 10);
 
     // Note: mastering_display and content_light are embedded in the AV1
-    // bitstream by rav1e but avif-serialize 0.8.x does not write the
+    // bitstream by rav1e but zenavif-serialize 0.8.x does not write the
     // ISOBMFF mdcv/clli property boxes. Container-level HDR metadata
-    // would require an avif-serialize upgrade.
+    // would require an zenavif-serialize upgrade.
 }

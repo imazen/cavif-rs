@@ -974,16 +974,16 @@ impl Encoder<'_> {
         let (color, alpha) = rayon::join(encode_color, encode_alpha);
         let (color, alpha) = (color?, alpha.transpose()?);
 
-        let mut serializer_config = avif_serialize::Aviffy::new();
+        let mut serializer_config = zenavif_serialize::Aviffy::new();
         serializer_config
             .matrix_coefficients(match matrix_coefficients {
-                MatrixCoefficients::Identity => avif_serialize::constants::MatrixCoefficients::Rgb,
-                MatrixCoefficients::BT709 => avif_serialize::constants::MatrixCoefficients::Bt709,
-                MatrixCoefficients::Unspecified => avif_serialize::constants::MatrixCoefficients::Unspecified,
-                MatrixCoefficients::BT601 => avif_serialize::constants::MatrixCoefficients::Bt601,
-                MatrixCoefficients::YCgCo => avif_serialize::constants::MatrixCoefficients::Ycgco,
-                MatrixCoefficients::BT2020NCL => avif_serialize::constants::MatrixCoefficients::Bt2020Ncl,
-                MatrixCoefficients::BT2020CL => avif_serialize::constants::MatrixCoefficients::Bt2020Cl,
+                MatrixCoefficients::Identity => zenavif_serialize::constants::MatrixCoefficients::Rgb,
+                MatrixCoefficients::BT709 => zenavif_serialize::constants::MatrixCoefficients::Bt709,
+                MatrixCoefficients::Unspecified => zenavif_serialize::constants::MatrixCoefficients::Unspecified,
+                MatrixCoefficients::BT601 => zenavif_serialize::constants::MatrixCoefficients::Bt601,
+                MatrixCoefficients::YCgCo => zenavif_serialize::constants::MatrixCoefficients::Ycgco,
+                MatrixCoefficients::BT2020NCL => zenavif_serialize::constants::MatrixCoefficients::Bt2020Ncl,
+                MatrixCoefficients::BT2020CL => zenavif_serialize::constants::MatrixCoefficients::Bt2020Cl,
                 _ => return Err(Error::Unsupported("matrix coefficients")),
             })
             .premultiplied_alpha(self.premultiplied_alpha);
@@ -1352,8 +1352,8 @@ fn rav1e_config(p: &Av1EncodeConfig) -> Config {
 
 /// Map rav1e TransferCharacteristics to avif-serialize TransferCharacteristics.
 /// Both use CICP values, so this is a 1:1 mapping on the common variants.
-fn map_transfer_characteristics(tc: TransferCharacteristics) -> avif_serialize::constants::TransferCharacteristics {
-    use avif_serialize::constants::TransferCharacteristics as TC;
+fn map_transfer_characteristics(tc: TransferCharacteristics) -> zenavif_serialize::constants::TransferCharacteristics {
+    use zenavif_serialize::constants::TransferCharacteristics as TC;
     match tc {
         TransferCharacteristics::BT709 => TC::Bt709,
         TransferCharacteristics::Unspecified => TC::Unspecified,
@@ -1377,8 +1377,8 @@ fn map_transfer_characteristics(tc: TransferCharacteristics) -> avif_serialize::
 
 /// Map rav1e ColorPrimaries to avif-serialize ColorPrimaries.
 /// Both use CICP values. avif-serialize has fewer variants, so some map to Unspecified.
-fn map_color_primaries(cp: ColorPrimaries) -> avif_serialize::constants::ColorPrimaries {
-    use avif_serialize::constants::ColorPrimaries as CP;
+fn map_color_primaries(cp: ColorPrimaries) -> zenavif_serialize::constants::ColorPrimaries {
+    use zenavif_serialize::constants::ColorPrimaries as CP;
     match cp {
         ColorPrimaries::BT709 => CP::Bt709,
         ColorPrimaries::Unspecified => CP::Unspecified,
