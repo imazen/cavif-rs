@@ -673,8 +673,16 @@ fn hdr10_full_pipeline() {
     let md = parser.primary_metadata().unwrap();
     assert_eq!(md.bit_depth, 10);
 
-    // Note: mastering_display and content_light are embedded in the AV1
-    // bitstream by rav1e but zenavif-serialize 0.8.x does not write the
-    // ISOBMFF mdcv/clli property boxes. Container-level HDR metadata
-    // would require an zenavif-serialize upgrade.
+    // Verify container-level HDR metadata (mdcv/clli property boxes)
+    let clli = parser.content_light_level().expect("clli should be present");
+    assert_eq!(clli.max_content_light_level, 1000);
+    assert_eq!(clli.max_pic_average_light_level, 400);
+
+    let mdcv = parser.mastering_display().expect("mdcv should be present");
+    assert_eq!(mdcv.primaries[0], (13250, 34500)); // green
+    assert_eq!(mdcv.primaries[1], (7500, 3000));   // blue
+    assert_eq!(mdcv.primaries[2], (34000, 16000)); // red
+    assert_eq!(mdcv.white_point, (15635, 16450));   // D65
+    assert_eq!(mdcv.max_luminance, 10000000);
+    assert_eq!(mdcv.min_luminance, 50);
 }

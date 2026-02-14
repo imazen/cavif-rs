@@ -1004,6 +1004,20 @@ impl Encoder<'_> {
         if let Some(exif) = &self.exif {
             serializer_config.set_exif(exif.to_vec());
         }
+        if let Some(md) = self.mastering_display {
+            serializer_config.set_mastering_display(
+                [(md.primaries[0].x, md.primaries[0].y),
+                 (md.primaries[1].x, md.primaries[1].y),
+                 (md.primaries[2].x, md.primaries[2].y)],
+                (md.white_point.x, md.white_point.y),
+                md.max_luminance, md.min_luminance,
+            );
+        }
+        if let Some(cl) = self.content_light {
+            serializer_config.set_content_light_level(
+                cl.max_content_light_level, cl.max_frame_average_light_level,
+            );
+        }
         let avif_file = serializer_config.to_vec(&color, alpha.as_deref(), width as u32, height as u32, input_pixels_bit_depth);
         let color_byte_size = color.len();
         let alpha_byte_size = alpha.as_ref().map_or(0, |a| a.len());
