@@ -82,7 +82,7 @@ pub use error::Error;
 #[deprecated = "Renamed to `ColorModel`"]
 pub type ColorSpace = ColorModel;
 
-pub use animated::{AnimFrame, AnimFrameRgba, EncodedAnimation};
+pub use animated::{AnimFrame, AnimFrame16, AnimFrameRgba, AnimFrameRgba16, EncodedAnimation};
 pub use av1encoder::{AlphaColorMode, BitDepth, ChromaSubsampling, EncodedImage, Encoder};
 #[doc(inline)]
 pub use zenrav1e::prelude::{
