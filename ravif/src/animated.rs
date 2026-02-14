@@ -6,7 +6,7 @@
 use crate::av1encoder::SpeedTweaks;
 use crate::error::Error;
 use zenrav1e::prelude::*;
-use zenavif_serialize::animated::{AnimFrame as SerializeFrame, AnimatedImage, serialize_animated};
+use zenavif_serialize::animated::{AnimFrame as SerializeFrame, AnimatedImage};
 use zenavif_serialize::Av1CBox;
 use rgb::{RGB8, RGBA8};
 use imgref::ImgRef;
@@ -84,28 +84,12 @@ impl crate::Encoder<'_> {
         let seq_header = make_sequence_header(self, width, height, false)?;
 
         let frames: Vec<SerializeFrame<'_>> = encoded_frames.iter().zip(durations_ms.iter()).enumerate().map(|(i, (data, &dur))| {
-            SerializeFrame {
-                color: data,
-                alpha: None,
-                duration: dur,
-                is_sync: i == 0,
-            }
+            SerializeFrame::new(data, dur).with_sync(i == 0)
         }).collect();
 
-        let avif_file = serialize_animated(&AnimatedImage {
-            width: width as u32,
-            height: height as u32,
-            timescale: 1000,
-            loop_count: 0,
-            frames: &frames,
-            color_config: make_av1c_config(false),
-            alpha_config: None,
-            color_seq_header: &seq_header,
-            alpha_seq_header: None,
-            colr: None,
-            clli: None,
-            mdcv: None,
-        });
+        let mut anim = AnimatedImage::new();
+        anim.set_color_config(make_av1c_config(false));
+        let avif_file = anim.serialize(width as u32, height as u32, &frames, &seq_header, None);
 
         Ok(EncodedAnimation {
             avif_file,
@@ -180,28 +164,16 @@ impl crate::Encoder<'_> {
             .enumerate()
             .map(|(i, (color_data, &dur))| {
                 let alpha = alpha_frames.as_ref().and_then(|af| af.get(i).map(|a| a.as_slice()));
-                SerializeFrame {
-                    color: color_data,
-                    alpha,
-                    duration: dur,
-                    is_sync: i == 0,
-                }
+                let frame = SerializeFrame::new(color_data, dur).with_sync(i == 0);
+                if let Some(a) = alpha { frame.with_alpha(a) } else { frame }
             }).collect();
 
-        let avif_file = serialize_animated(&AnimatedImage {
-            width: width as u32,
-            height: height as u32,
-            timescale: 1000,
-            loop_count: 0,
-            frames: &frames,
-            color_config: make_av1c_config(false),
-            alpha_config: if alpha_frames.is_some() { Some(make_av1c_config(true)) } else { None },
-            color_seq_header: &color_seq_header,
-            alpha_seq_header: alpha_seq_header.as_deref(),
-            colr: None,
-            clli: None,
-            mdcv: None,
-        });
+        let mut anim = AnimatedImage::new();
+        anim.set_color_config(make_av1c_config(false));
+        if alpha_frames.is_some() {
+            anim.set_alpha_config(make_av1c_config(true));
+        }
+        let avif_file = anim.serialize(width as u32, height as u32, &frames, &color_seq_header, alpha_seq_header.as_deref());
 
         Ok(EncodedAnimation {
             avif_file,
@@ -526,17 +498,9 @@ fn fill_frame_alpha(
 
 /// Construct an Av1CBox for 8-bit 4:2:0 (color) or monochrome (alpha).
 fn make_av1c_config(is_alpha: bool) -> Av1CBox {
-    Av1CBox {
-        seq_profile: 0,
-        seq_level_idx_0: 4,
-        seq_tier_0: false,
-        high_bitdepth: false,
-        twelve_bit: false,
-        monochrome: is_alpha,
-        chroma_subsampling_x: true,
-        chroma_subsampling_y: true,
-        chroma_sample_position: 0,
-    }
+    let mut config = Av1CBox::default();
+    config.monochrome = is_alpha;
+    config
 }
 
 
