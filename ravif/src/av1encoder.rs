@@ -135,6 +135,14 @@ pub struct Encoder<'exif_slice> {
     pub(crate) mastering_display: Option<MasteringDisplay>,
     /// HDR content light level metadata (CEA-861.3)
     pub(crate) content_light: Option<ContentLight>,
+    /// Image rotation (counter-clockwise degrees: 0, 90, 180, 270)
+    rotation: Option<u8>,
+    /// Image mirror axis (0 = vertical/left-right, 1 = horizontal/top-bottom)
+    mirror: Option<u8>,
+    /// ICC color profile
+    icc_profile: Option<Vec<u8>>,
+    /// XMP metadata
+    xmp: Option<Vec<u8>>,
     /// Enable AV1 quantization matrices (imazen/rav1e fork)
     #[cfg(feature = "imazen")]
     pub(crate) enable_qm: bool,
@@ -196,6 +204,10 @@ impl<'exif_slice> Default for Encoder<'exif_slice> {
             pixel_range: None,
             mastering_display: None,
             content_light: None,
+            rotation: None,
+            mirror: None,
+            icc_profile: None,
+            xmp: None,
             #[cfg(feature = "imazen")]
             enable_qm: true,
             #[cfg(feature = "imazen")]
@@ -483,6 +495,42 @@ impl<'exif_slice> Encoder<'exif_slice> {
     #[must_use]
     pub fn with_content_light(mut self, cl: ContentLight) -> Self {
         self.content_light = Some(cl);
+        self
+    }
+
+    /// Set image rotation in the AVIF container.
+    ///
+    /// Angle is counter-clockwise in degrees: 0, 90, 180, or 270.
+    #[inline(always)]
+    #[must_use]
+    pub fn with_rotation(mut self, angle: u8) -> Self {
+        self.rotation = Some(angle);
+        self
+    }
+
+    /// Set image mirror axis in the AVIF container.
+    ///
+    /// `0` = vertical axis (left-right flip), `1` = horizontal axis (top-bottom flip).
+    #[inline(always)]
+    #[must_use]
+    pub fn with_mirror(mut self, axis: u8) -> Self {
+        self.mirror = Some(axis);
+        self
+    }
+
+    /// Set ICC color profile to embed in the AVIF container.
+    #[inline(always)]
+    #[must_use]
+    pub fn with_icc_profile(mut self, profile: Vec<u8>) -> Self {
+        self.icc_profile = Some(profile);
+        self
+    }
+
+    /// Set XMP metadata to embed in the AVIF container.
+    #[inline(always)]
+    #[must_use]
+    pub fn with_xmp(mut self, xmp: Vec<u8>) -> Self {
+        self.xmp = Some(xmp);
         self
     }
 
@@ -1017,6 +1065,18 @@ impl Encoder<'_> {
             serializer_config.set_content_light_level(
                 cl.max_content_light_level, cl.max_frame_average_light_level,
             );
+        }
+        if let Some(angle) = self.rotation {
+            serializer_config.set_rotation(angle);
+        }
+        if let Some(axis) = self.mirror {
+            serializer_config.set_mirror(axis);
+        }
+        if let Some(ref icc) = self.icc_profile {
+            serializer_config.set_icc_profile(icc.clone());
+        }
+        if let Some(ref xmp) = self.xmp {
+            serializer_config.set_xmp(xmp.clone());
         }
         let avif_file = serializer_config.to_vec(&color, alpha.as_deref(), width as u32, height as u32, input_pixels_bit_depth);
         let color_byte_size = color.len();
