@@ -1,6 +1,6 @@
 use clap::{value_parser, Arg, ArgAction, Command};
 use imgref::ImgVec;
-use ravif::{AlphaColorMode, BitDepth, ChromaSubsampling, ColorModel, EncodedImage, Encoder, RGBA8};
+use zenravif::{AlphaColorMode, BitDepth, ChromaSubsampling, ColorModel, EncodedImage, Encoder, RGBA8};
 use rayon::prelude::*;
 use std::fs;
 use std::io::{Read, Write};
@@ -110,7 +110,7 @@ fn run() -> Result<(), BoxError> {
             .long("libavif-scale")
             .action(ArgAction::SetTrue)
             .num_args(0)
-            .help("Interpret --quality using libavif/avifenc's linear scale instead of ravif's curve"))
+            .help("Interpret --quality using libavif/avifenc's linear scale instead of zenravif's curve"))
         .arg(Arg::new("IMAGES")
             .index(1)
             .num_args(1..)

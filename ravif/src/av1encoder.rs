@@ -295,7 +295,7 @@ impl<'exif_slice> Encoder<'exif_slice> {
     /// Produces the same perceived visual quality (Butteraugli error) as avifenc at the
     /// same Q number. Use this for fair comparisons against libavif/avifenc.
     ///
-    /// Note: At the same perceived quality, ravif typically produces smaller files
+    /// Note: At the same perceived quality, zenravif typically produces smaller files
     /// due to rav1e's superior encoding efficiency. This advantage appears when
     /// comparing images with matched visual quality scores, not matched Q numbers.
     #[inline(always)]
@@ -417,7 +417,7 @@ impl<'exif_slice> Encoder<'exif_slice> {
     /// # Example
     ///
     /// ```
-    /// use ravif::*;
+    /// use zenravif::*;
     /// use std::time::Duration;
     /// # fn example(pixels: &[RGBA8], width: usize, height: usize) {
     ///

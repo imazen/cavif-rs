@@ -1,4 +1,4 @@
-use ravif::*;
+use zenravif::*;
 use std::thread;
 use std::time::{Duration, Instant};
 

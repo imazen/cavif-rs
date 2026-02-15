@@ -3,7 +3,7 @@
 //! # Basic Usage
 //!
 //! ```rust
-//! use ravif::*;
+//! use zenravif::*;
 //! # fn doit(pixels: &[RGBA8], width: usize, height: usize) -> Result<(), Error> {
 //! let res = Encoder::new()
 //!     .with_quality(70.)
@@ -18,7 +18,7 @@
 //! For image proxies and web servers, encoding can be limited with a built-in timeout:
 //!
 //! ```rust
-//! use ravif::*;
+//! use zenravif::*;
 //! use std::time::Duration;
 //! # fn example(pixels: &[RGBA8], width: usize, height: usize) -> Result<(), Error> {
 //!
@@ -41,7 +41,7 @@
 //! For manual cancellation from another thread, use `CancellationToken`:
 //!
 //! ```rust
-//! use ravif::*;
+//! use zenravif::*;
 //! use std::thread;
 //! use std::time::Duration;
 //! # fn example(pixels: &[RGBA8], width: usize, height: usize) -> Result<(), Error> {

@@ -1,84 +1,68 @@
-# `ravif` — Pure Rust library for AVIF image encoding
+# zenravif
 
-Encoder for AVIF images. Based on [`rav1e`](https://lib.rs/crates/rav1e) and [`avif-serialize`](https://lib.rs/crates/avif-serialize).
+[![crates.io](https://img.shields.io/crates/v/zenravif.svg)](https://crates.io/crates/zenravif)
+[![docs.rs](https://docs.rs/zenravif/badge.svg)](https://docs.rs/zenravif)
+[![license](https://img.shields.io/crates/l/zenravif.svg)](LICENSE)
 
-The API is just a single `encode_rgba()` function call that spits an AVIF image.
+Pure Rust AVIF encoder. Wraps [zenrav1e](https://lib.rs/crates/zenrav1e) (AV1 encoder) and [zenavif-serialize](https://lib.rs/crates/zenavif-serialize) (AVIF container muxer) to produce AVIF files from RGB/RGBA pixels.
 
-This library powers the [`cavif`](https://lib.rs/crates/cavif) encoder. It has an encoding configuration specifically tuned for still images, and gives better quality/performance than stock `rav1e`.
+Supports still images, animated sequences, HDR metadata, chroma subsampling, and cancellation/timeout.
 
-## Features
+## Fork of ravif
 
-- **Built-in Timeout**: Simple `with_timeout()` method with 10ms granularity - perfect for image proxies
-- **Cancellation Support**: Thread-safe `CancellationToken` for manual control from other threads
-- **Responsive**: Timeout/cancellation checked every 10ms with minimal overhead (~20-50ns per check)
-- **Quality Control**: Configurable quality (1-100) for both color and alpha channels
-- **Speed Presets**: 1 (slowest/best) to 10 (fastest)
-- **Flexible Color Models**: YCbCr (default, best compression) or RGB
-- **Alpha Channel**: Multiple alpha handling modes including premultiplied alpha
+Forked from [ravif](https://lib.rs/crates/ravif) v0.13.0 by Kornel Lesinski. Uses [zenrav1e](https://lib.rs/crates/zenrav1e) (Imazen's rav1e fork) instead of upstream rav1e.
 
-## Cancellation and Timeout
+Changes from upstream:
+- **Animation** — `encode_animation_rgb`, `encode_animation_rgba`, 16-bit variants
+- **HDR metadata** — mastering display (SMPTE ST 2086), content light level (CEA-861.3)
+- **Container metadata** — rotation, mirror, ICC profile, XMP, EXIF embedding
+- **Cancellation** — `CancellationToken` + `with_timeout()` for responsive cancellation
+- **12-bit encoding** — `BitDepth::Twelve` for HDR content
+- **4:2:0 subsampling** — `ChromaSubsampling::Yuv420` with box-filter downsampling
+- **libavif-compatible quality** — `with_libavif_quality()` for avifenc-matching Q scale
+- **Imazen fork features** — QM, VAQ, still-image tuning, lossless, trellis quantization (behind `imazen` feature)
 
-### Built-in Timeout
+## Usage
 
-The simplest way to limit encoding time:
+```toml
+[dependencies]
+zenravif = "0.1"
+```
+
+### Still image
 
 ```rust
-use ravif::*;
+use zenravif::*;
+
+let pixels: &[RGBA8] = &[/* your pixel data */];
+let img = Img::new(pixels, width, height);
+
+let result = Encoder::new()
+    .with_quality(70.0)
+    .with_speed(4)
+    .encode_rgba(img)?;
+
+std::fs::write("output.avif", &result.avif_file)?;
+```
+
+### With timeout
+
+```rust
+use zenravif::*;
 use std::time::Duration;
 
-let img = /* your RGBA8 image data */;
-
-let encoder = Encoder::new()
+let result = Encoder::new()
     .with_quality(70.0)
-    .with_speed(5)
-    .with_timeout(Duration::from_millis(100)); // Cancel after 100ms
+    .with_timeout(Duration::from_millis(500))
+    .encode_rgba(img);
 
-match encoder.encode_rgba(img) {
-    Ok(result) => println!("Encoded: {} bytes", result.avif_file.len()),
-    Err(Error::Cancelled) => println!("Encoding timed out"),
-    Err(e) => eprintln!("Error: {:?}", e),
+match result {
+    Ok(encoded) => { /* use encoded.avif_file */ }
+    Err(Error::Cancelled) => { /* timed out */ }
+    Err(e) => { /* other error */ }
 }
 ```
 
-### Manual Cancellation Token
+## License
 
-For cancelling from another thread:
-
-```rust
-use ravif::*;
-use std::thread;
-use std::time::Duration;
-
-let img = /* your RGBA8 image data */;
-let token = CancellationToken::new();
-let token_clone = token.clone();
-
-// Cancel encoding from another thread
-thread::spawn(move || {
-    thread::sleep(Duration::from_millis(100));
-    token_clone.cancel();
-});
-
-let encoder = Encoder::new()
-    .with_quality(70.0)
-    .with_speed(5)
-    .with_cancellation_token(token);
-
-match encoder.encode_rgba(img) {
-    Ok(result) => println!("Encoded: {} bytes", result.avif_file.len()),
-    Err(Error::Cancelled) => println!("Encoding was cancelled"),
-    Err(e) => eprintln!("Error: {:?}", e),
-}
-```
-
-### Combined
-
-You can use both timeout and cancellation token together:
-
-```rust
-let encoder = Encoder::new()
-    .with_timeout(Duration::from_secs(1))      // Timeout after 1 second
-    .with_cancellation_token(token);            // OR cancel via token
-```
-
-See `examples/cancellation.rs` for more usage patterns.
+BSD-3-Clause. Original code copyright Cloudflare, Inc. Fork additions copyright Imazen LLC.
