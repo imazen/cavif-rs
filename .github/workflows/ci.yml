@@ -18,13 +18,13 @@ jobs:
   # Pure Rust testing (no asm, no lcms2)
   # Tests zenravif library only — cavif binary needs lcms2 + nasm
   # ==========================================================================
-  test-pure-rust:
-    name: Test pure Rust (${{ matrix.os }})
+  test-x64:
+    name: Test x64 pure Rust (${{ matrix.os }})
     runs-on: ${{ matrix.os }}
     strategy:
       fail-fast: false
       matrix:
-        os: [ubuntu-latest, windows-latest, macos-latest]
+        os: [ubuntu-latest, windows-latest]
     steps:
       - uses: actions/checkout@v6
 
@@ -38,11 +38,15 @@ jobs:
         run: cargo test -p zenravif ${{ env.PURE_RUST }}
 
   # ==========================================================================
-  # asm testing (requires NASM)
+  # asm testing (requires NASM) — x86_64 only
   # ==========================================================================
   test-asm:
-    name: Test with asm (Linux)
-    runs-on: ubuntu-latest
+    name: Test x64 asm (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest]
     steps:
       - uses: actions/checkout@v6
 
@@ -57,6 +61,31 @@ jobs:
 
       - name: Test zenravif (with asm + threading)
         run: cargo test -p zenravif
+
+  # ==========================================================================
+  # Native aarch64 testing (pure Rust)
+  # ==========================================================================
+  test-aarch64:
+    name: Test aarch64 (${{ matrix.name }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { os: ubuntu-24.04-arm, name: Linux }
+          - { os: macos-latest, name: macOS }
+          - { os: windows-11-arm, name: Windows }
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Cache cargo
+        uses: Swatinem/rust-cache@v2
+
+      - name: Test zenravif (pure Rust)
+        run: cargo test -p zenravif ${{ env.PURE_RUST }}
 
   # ==========================================================================
   # Clippy
