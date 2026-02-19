@@ -1,17 +1,130 @@
-name: Rust
+name: CI
 
-on: [push, pull_request]
+on:
+  push:
+    branches: [main, master]
+  pull_request:
+    branches: [main, master]
+  workflow_dispatch:
+
+env:
+  CARGO_TERM_COLOR: always
+  RUST_BACKTRACE: 1
+  # Pure Rust flags for zenravif (no asm, no C deps)
+  PURE_RUST: "--no-default-features --features threading"
 
 jobs:
-  build:
+  # ==========================================================================
+  # Pure Rust testing (no asm, no lcms2)
+  # Tests zenravif library only — cavif binary needs lcms2 + nasm
+  # ==========================================================================
+  test-pure-rust:
+    name: Test pure Rust (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest, macos-latest]
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Cache cargo
+        uses: Swatinem/rust-cache@v2
+
+      - name: Test zenravif (pure Rust)
+        run: cargo test -p zenravif ${{ env.PURE_RUST }}
+
+  # ==========================================================================
+  # asm testing (requires NASM)
+  # ==========================================================================
+  test-asm:
+    name: Test with asm (Linux)
     runs-on: ubuntu-latest
     steps:
-    - uses: actions/checkout@v2
-    - uses: dtolnay/rust-toolchain@stable
-    - uses: ilammy/setup-nasm@v1
-    - name: Tests
-      run: cargo test --verbose --all --all-targets
-    - name: Check semver
-      uses: obi1kenobi/cargo-semver-checks-action@v2
-      with:
-        package: ravif
+      - uses: actions/checkout@v6
+
+      - name: Install NASM
+        uses: ilammy/setup-nasm@v1
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Cache cargo
+        uses: Swatinem/rust-cache@v2
+
+      - name: Test zenravif (with asm + threading)
+        run: cargo test -p zenravif
+
+  # ==========================================================================
+  # Clippy
+  # ==========================================================================
+  clippy:
+    name: Clippy
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          components: clippy
+
+      - name: Cache cargo
+        uses: Swatinem/rust-cache@v2
+
+      - name: Clippy zenravif (pure Rust)
+        run: cargo clippy -p zenravif ${{ env.PURE_RUST }} --all-targets -- -D warnings
+
+  # ==========================================================================
+  # Format check
+  # ==========================================================================
+  fmt:
+    name: Format
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt
+
+      - name: Format check
+        run: cargo fmt --all -- --check
+
+  # ==========================================================================
+  # MSRV check
+  # ==========================================================================
+  msrv:
+    name: MSRV (1.85)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: Install Rust 1.85
+        uses: dtolnay/rust-toolchain@master
+        with:
+          toolchain: "1.85"
+
+      - name: Cache cargo
+        uses: Swatinem/rust-cache@v2
+
+      - name: Check MSRV
+        run: cargo check -p zenravif ${{ env.PURE_RUST }}
+
+  # ==========================================================================
+  # Semver check
+  # ==========================================================================
+  semver:
+    name: Semver Check
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: Check semver
+        uses: obi1kenobi/cargo-semver-checks-action@v2
+        with:
+          package: zenravif
