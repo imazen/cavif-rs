@@ -88,6 +88,31 @@ jobs:
         run: cargo test -p zenravif ${{ env.PURE_RUST }}
 
   # ==========================================================================
+  # Cross-compiled 32-bit testing (i686 via QEMU, pure Rust only)
+  # ==========================================================================
+  test-i686:
+    name: Test i686 (pure Rust)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: i686-unknown-linux-gnu
+
+      - name: Install cross
+        uses: taiki-e/install-action@cross
+
+      - name: Cache cargo
+        uses: Swatinem/rust-cache@v2
+        with:
+          key: cross-i686
+
+      - name: Test zenravif (i686/QEMU, pure Rust)
+        run: cross test -p zenravif ${{ env.PURE_RUST }} --target i686-unknown-linux-gnu
+
+  # ==========================================================================
   # Clippy
   # ==========================================================================
   clippy:
