@@ -11,7 +11,7 @@ categories = ["command-line-utilities", "multimedia::images", "multimedia::encod
 homepage = "https://lib.rs/crates/cavif"
 repository = "https://github.com/kornelski/cavif-rs"
 include = ["README.md", "LICENSE", "/src/*.rs"]
-rust-version = "1.85"
+rust-version = "1.89"
 
 [dependencies]
 clap = { version = "4.5.40", default-features = false, features = ["color", "suggestions", "wrap_help", "std", "cargo"] }
