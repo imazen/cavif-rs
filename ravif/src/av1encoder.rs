@@ -16,15 +16,11 @@ fn check_cancellation(
     cancel_token: Option<&CancellationToken>,
     deadline: Option<std::time::Instant>,
 ) -> Result<(), Error> {
-    if let Some(token) = cancel_token {
-        if token.is_cancelled() {
-            return Err(Error::Cancelled);
-        }
+    if cancel_token.is_some_and(|t| t.is_cancelled()) {
+        return Err(Error::Cancelled);
     }
-    if let Some(deadline) = deadline {
-        if std::time::Instant::now() >= deadline {
-            return Err(Error::Cancelled);
-        }
+    if deadline.is_some_and(|d| std::time::Instant::now() >= d) {
+        return Err(Error::Cancelled);
     }
     Ok(())
 }
@@ -1500,7 +1496,7 @@ fn init_frame_3<P: zenrav1e::Pixel + Default>(
             *v = px[2];
 
             pixel_count += 1;
-            if pixel_count % CHECK_INTERVAL == 0 {
+            if pixel_count.is_multiple_of(CHECK_INTERVAL) {
                 check_cancellation(cancel_token, deadline)?;
             }
         }
@@ -1562,7 +1558,7 @@ fn init_frame_3_420<P: zenrav1e::Pixel + Default>(
             }
 
             pixel_count += 1;
-            if pixel_count % CHECK_INTERVAL == 0 {
+            if pixel_count.is_multiple_of(CHECK_INTERVAL) {
                 check_cancellation(cancel_token, deadline)?;
             }
         }
@@ -1614,7 +1610,7 @@ fn init_frame_1<P: zenrav1e::Pixel + Default>(
             *y = planes.next().ok_or(Error::TooFewPixels)?;
 
             pixel_count += 1;
-            if pixel_count % CHECK_INTERVAL == 0 {
+            if pixel_count.is_multiple_of(CHECK_INTERVAL) {
                 check_cancellation(cancel_token, deadline)?;
             }
         }
@@ -1630,15 +1626,11 @@ fn encode_to_av1<P: zenrav1e::Pixel>(
     init: impl FnOnce(&mut Frame<P>) -> Result<(), Error>,
 ) -> Result<Vec<u8>, Error> {
     // Check cancellation/timeout before starting
-    if let Some(token) = cancel_token {
-        if token.is_cancelled() {
-            return Err(Error::Cancelled);
-        }
+    if cancel_token.is_some_and(|t| t.is_cancelled()) {
+        return Err(Error::Cancelled);
     }
-    if let Some(deadline) = deadline {
-        if std::time::Instant::now() >= deadline {
-            return Err(Error::Cancelled);
-        }
+    if deadline.is_some_and(|d| std::time::Instant::now() >= d) {
+        return Err(Error::Cancelled);
     }
 
     let mut ctx: Context<P> = rav1e_config(p).new_context()?;
@@ -1653,15 +1645,11 @@ fn encode_to_av1<P: zenrav1e::Pixel>(
     loop {
         // Check cancellation on every iteration (fast: ~5-15ns for token, ~20-50ns for timeout)
         // This ensures responsive cancellation even if receive_packet() is slow
-        if let Some(token) = cancel_token {
-            if token.is_cancelled() {
-                return Err(Error::Cancelled);
-            }
+        if cancel_token.is_some_and(|t| t.is_cancelled()) {
+            return Err(Error::Cancelled);
         }
-        if let Some(deadline) = deadline {
-            if std::time::Instant::now() >= deadline {
-                return Err(Error::Cancelled);
-            }
+        if deadline.is_some_and(|d| std::time::Instant::now() >= d) {
+            return Err(Error::Cancelled);
         }
 
         match ctx.receive_packet() {

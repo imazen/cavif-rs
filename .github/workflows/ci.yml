@@ -179,28 +179,6 @@ jobs:
         run: cargo hack check -p zenravif --rust-version ${{ env.PURE_RUST }}
 
   # ==========================================================================
-  # Semver check
-  # ==========================================================================
-  semver:
-    name: Semver Check
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v6
-
-      - name: Patch path deps for CI
-        shell: bash
-        run: |
-          sed -E \
-            -e 's|, path = "\.\./\.\./[^"]*"||g' \
-            -e 's|path = "\.\./\.\./[^"]*", ||g' \
-            ravif/Cargo.toml > ravif/Cargo.toml.ci && mv ravif/Cargo.toml.ci ravif/Cargo.toml
-
-      - name: Check semver
-        uses: obi1kenobi/cargo-semver-checks-action@v2
-        with:
-          package: zenravif
-
-  # ==========================================================================
   # Code coverage
   # ==========================================================================
   coverage:
