@@ -11,7 +11,7 @@ categories = ["multimedia::images", "multimedia::encoding"]
 homepage = "https://lib.rs/crates/zenravif"
 repository = "https://github.com/imazen/cavif-rs"
 include = ["README.md", "LICENSE", "Cargo.toml", "/src/*.rs"]
-rust-version = "1.85"
+rust-version = "1.93"
 
 [dependencies]
 zenavif-serialize = { version = "0.1", path = "../../zenavif-serialize" }

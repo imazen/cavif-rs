@@ -355,7 +355,7 @@ fn encode_sequence_av1<P: Pixel + Default>(
 
     let mut result = Vec::with_capacity(num_frames);
     for p in packets {
-        result.push(p.ok_or_else(|| Error::Unsupported("frame was not encoded"))?);
+        result.push(p.ok_or(Error::Unsupported("frame was not encoded"))?);
     }
     Ok(result)
 }

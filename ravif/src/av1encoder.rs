@@ -921,6 +921,7 @@ impl Encoder<'_> {
         #[cfg(feature = "imazen")]
         let override_encode_bottomup = self.override_encode_bottomup;
         let encode_color = move || {
+            #[cfg_attr(not(feature = "imazen"), allow(unused_mut))]
             let mut speed = SpeedTweaks::from_my_preset(self.speed, self.quantizer);
             #[cfg(feature = "imazen")]
             {
