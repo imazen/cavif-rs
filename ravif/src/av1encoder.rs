@@ -80,6 +80,28 @@ pub enum BitDepth {
     Auto,
 }
 
+/// Pre-encoded gain map data for embedding in an AVIF file.
+///
+/// Contains an already-encoded AV1 bitstream of the gain map image
+/// plus the ISO 21496-1 binary metadata describing how to apply it.
+///
+/// The gain map is used for SDR/HDR tone mapping: the SDR base image
+/// is stored as the primary item, and the gain map allows reconstruction
+/// of the HDR rendition.
+#[derive(Debug, Clone)]
+pub struct GainMapData {
+    /// Pre-encoded AV1 bitstream of the gain map image.
+    pub av1_data: Vec<u8>,
+    /// Width of the gain map image in pixels.
+    pub width: u32,
+    /// Height of the gain map image in pixels.
+    pub height: u32,
+    /// Bit depth of the gain map AV1 data (typically 8 or 10).
+    pub bit_depth: u8,
+    /// ISO 21496-1 binary metadata blob.
+    pub metadata: Vec<u8>,
+}
+
 /// The newly-created image file + extra info FYI
 #[non_exhaustive]
 #[derive(Clone)]
@@ -139,6 +161,8 @@ pub struct Encoder<'exif_slice> {
     icc_profile: Option<Vec<u8>>,
     /// XMP metadata
     xmp: Option<Vec<u8>>,
+    /// Pre-encoded gain map for UltraHDR / ISO 21496-1
+    gain_map: Option<GainMapData>,
     /// Enable AV1 quantization matrices (imazen/rav1e fork)
     #[cfg(feature = "imazen")]
     pub(crate) enable_qm: bool,
@@ -204,6 +228,7 @@ impl<'exif_slice> Default for Encoder<'exif_slice> {
             mirror: None,
             icc_profile: None,
             xmp: None,
+            gain_map: None,
             #[cfg(feature = "imazen")]
             enable_qm: true,
             #[cfg(feature = "imazen")]
@@ -527,6 +552,19 @@ impl<'exif_slice> Encoder<'exif_slice> {
     #[must_use]
     pub fn with_xmp(mut self, xmp: Vec<u8>) -> Self {
         self.xmp = Some(xmp);
+        self
+    }
+
+    /// Embed a pre-encoded gain map for UltraHDR / ISO 21496-1.
+    ///
+    /// The gain map enables SDR/HDR tone mapping: the primary image is the SDR
+    /// base, and the gain map allows reconstruction of the HDR rendition.
+    ///
+    /// * `gain_map` - Pre-encoded AV1 gain map data with ISO 21496-1 metadata.
+    #[inline(always)]
+    #[must_use]
+    pub fn with_gain_map(mut self, gain_map: GainMapData) -> Self {
+        self.gain_map = Some(gain_map);
         self
     }
 
@@ -1074,6 +1112,15 @@ impl Encoder<'_> {
         }
         if let Some(ref xmp) = self.xmp {
             serializer_config.set_xmp(xmp.clone());
+        }
+        if let Some(ref gm) = self.gain_map {
+            serializer_config.set_gain_map(
+                gm.av1_data.clone(),
+                gm.width,
+                gm.height,
+                gm.bit_depth,
+                gm.metadata.clone(),
+            );
         }
         let avif_file = serializer_config.to_vec(&color, alpha.as_deref(), width as u32, height as u32, input_pixels_bit_depth);
         let color_byte_size = color.len();

@@ -83,7 +83,7 @@ pub use error::Error;
 pub type ColorSpace = ColorModel;
 
 pub use animated::{AnimFrame, AnimFrame16, AnimFrameRgba, AnimFrameRgba16, EncodedAnimation};
-pub use av1encoder::{AlphaColorMode, BitDepth, ChromaSubsampling, EncodedImage, Encoder};
+pub use av1encoder::{AlphaColorMode, BitDepth, ChromaSubsampling, EncodedImage, Encoder, GainMapData};
 #[doc(inline)]
 pub use zenrav1e::prelude::{
     ChromaticityPoint, ColorPrimaries, ContentLight, MasteringDisplay,
