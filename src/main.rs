@@ -152,10 +152,10 @@ fn run() -> Result<(), BoxError> {
     let files: Vec<_> = files
         .filter(|pathstr| {
             let path = Path::new(&pathstr);
-            if let Some(s) = path.to_str() {
-                if quiet && s.parse::<u8>().is_ok() && !path.exists() {
-                    eprintln!("warning: -q is not for quality, so '{s}' is misinterpreted as a file. Use -Q {s}");
-                }
+            if let Some(s) = path.to_str().filter(|_| quiet)
+                && s.parse::<u8>().is_ok() && !path.exists()
+            {
+                eprintln!("warning: -q is not for quality, so '{s}' is misinterpreted as a file. Use -Q {s}");
             }
             path.extension().is_none_or(|e| if e == "avif" {
                 if !quiet {
