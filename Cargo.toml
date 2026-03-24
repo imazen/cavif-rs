@@ -42,7 +42,7 @@ strip = true
 opt-level = 2
 
 [dev-dependencies]
-avif-parse = "1.4.0"
+avif-parse = "2.0.0"
 
 [badges]
 maintenance = { status = "actively-developed" }

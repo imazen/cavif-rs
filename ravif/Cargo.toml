@@ -32,5 +32,5 @@ threading = ["dep:rayon", "zenrav1e/threading"]
 imazen = []
 
 [dev-dependencies]
-avif-parse = "1.4.0"
+avif-parse = "2.0.0"
 zenavif-parse = { version = "0.4", path = "../../zenavif-parse" }
