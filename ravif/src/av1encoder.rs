@@ -141,6 +141,11 @@ pub struct Encoder<'exif_slice> {
     exif: Option<Cow<'exif_slice, [u8]>>,
     /// Optional cancellation token for interrupting encoding
     cancellation_token: Option<CancellationToken>,
+    /// Optional cooperative stop token (from zencodec/enough).
+    /// When the `stop` feature is enabled, this is forwarded to zenrav1e's
+    /// per-superblock cancellation via `Context::set_stop()`.
+    #[cfg(feature = "stop")]
+    stop_token: Option<almost_enough::StopToken>,
     /// Optional timeout duration for encoding
     timeout: Option<std::time::Duration>,
     /// Override color primaries (default: BT709 for sRGB)
@@ -218,6 +223,8 @@ impl<'exif_slice> Default for Encoder<'exif_slice> {
             exif: None,
             alpha_color_mode: AlphaColorMode::UnassociatedClean,
             cancellation_token: None,
+            #[cfg(feature = "stop")]
+            stop_token: None,
             timeout: None,
             color_primaries: None,
             transfer_characteristics: None,
@@ -424,6 +431,24 @@ impl<'exif_slice> Encoder<'exif_slice> {
     #[must_use]
     pub fn with_cancellation_token(mut self, token: CancellationToken) -> Self {
         self.cancellation_token = Some(token);
+        self
+    }
+
+    /// Set a cooperative stop token for per-superblock cancellation.
+    ///
+    /// When the `stop` feature is enabled, this token is forwarded to
+    /// zenrav1e's `Context::set_stop()`, enabling cancellation during
+    /// encoding (not just between packets). The encoder checks the token
+    /// once per superblock (~64x64 pixels), providing sub-millisecond
+    /// cancellation response.
+    ///
+    /// This is the preferred cancellation mechanism for integration with
+    /// the `enough` crate's cooperative cancellation framework.
+    #[cfg(feature = "stop")]
+    #[inline(always)]
+    #[must_use]
+    pub fn with_stop(mut self, stop: almost_enough::StopToken) -> Self {
+        self.stop_token = Some(stop);
         self
     }
 
@@ -999,6 +1024,8 @@ impl Encoder<'_> {
                     override_rdo_tx_decision,
                     #[cfg(feature = "imazen")]
                     enable_trellis: self.enable_trellis,
+                    #[cfg(feature = "stop")]
+                    stop_token: self.stop_token.clone(),
                 },
                 cancel_token,
                 deadline,
@@ -1044,6 +1071,8 @@ impl Encoder<'_> {
                         override_rdo_tx_decision: None,
                         #[cfg(feature = "imazen")]
                         enable_trellis: false,
+                        #[cfg(feature = "stop")]
+                        stop_token: self.stop_token.clone(),
                     },
                     cancel_token_alpha,
                     deadline,
@@ -1372,6 +1401,8 @@ struct Av1EncodeConfig {
     pub override_rdo_tx_decision: Option<bool>,
     #[cfg(feature = "imazen")]
     pub enable_trellis: bool,
+    #[cfg(feature = "stop")]
+    pub stop_token: Option<almost_enough::StopToken>,
 }
 
 fn rav1e_config(p: &Av1EncodeConfig) -> Config {
@@ -1681,6 +1712,19 @@ fn encode_to_av1<P: zenrav1e::Pixel>(
     }
 
     let mut ctx: Context<P> = rav1e_config(p).new_context()?;
+
+    // Wire per-superblock cooperative cancellation via zenrav1e's stop feature.
+    // This enables cancellation DURING encoding, not just between packets.
+    // Prefer the direct stop token; fall back to wrapping CancellationToken.
+    #[cfg(feature = "stop")]
+    {
+        if let Some(ref stop) = p.stop_token {
+            ctx.set_stop(std::sync::Arc::new(stop.clone()));
+        } else if let Some(token) = cancel_token {
+            ctx.set_stop(std::sync::Arc::new(token.clone()));
+        }
+    }
+
     let mut frame = ctx.new_frame();
 
     init(&mut frame)?;
@@ -1707,6 +1751,8 @@ fn encode_to_av1<P: zenrav1e::Pixel>(
                 _ => continue,
             },
             Err(EncoderStatus::Encoded | EncoderStatus::LimitReached) => break,
+            #[cfg(feature = "stop")]
+            Err(EncoderStatus::Cancelled) => return Err(Error::Cancelled),
             Err(err) => Err(err)?,
         }
     }

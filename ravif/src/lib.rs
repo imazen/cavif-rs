@@ -73,6 +73,8 @@ mod animated;
 
 mod cancel;
 pub use cancel::CancellationToken;
+#[cfg(feature = "stop")]
+pub use almost_enough::StopToken;
 
 mod error;
 pub use av1encoder::ColorModel;

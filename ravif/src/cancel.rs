@@ -72,6 +72,17 @@ impl Default for CancellationToken {
     }
 }
 
+#[cfg(feature = "stop")]
+impl almost_enough::Stop for CancellationToken {
+    fn check(&self) -> Result<(), almost_enough::StopReason> {
+        if self.is_cancelled() {
+            Err(almost_enough::StopReason::Cancelled)
+        } else {
+            Ok(())
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
