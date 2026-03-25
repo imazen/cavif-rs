@@ -1,6 +1,6 @@
 # `cavif` — PNG/JPEG to AVIF converter
 
-Encoder/converter for AVIF images. Based on [`rav1e`](https://lib.rs/crates/rav1e) and [`avif-serialize`](https://lib.rs/crates/avif-serialize) via the [`ravif`](https://lib.rs/crates/ravif) crate, which makes it an almost pure-Rust tool (it uses C LCMS2 for color profiles).
+Encoder/converter for AVIF images. Based on [`zenrav1e`](https://lib.rs/crates/zenrav1e) and [`zenavif-serialize`](https://lib.rs/crates/zenavif-serialize) via the [`zenravif`](https://lib.rs/crates/zenravif) crate, which makes it an almost pure-Rust tool (it uses C LCMS2 for color profiles).
 
 ## Installation
 
@@ -58,7 +58,7 @@ Images [work in all modern browsers](https://caniuse.com/avif).
 
 ## Building
 
-To build it from source you need Rust 1.67 or later, preferably via [rustup](https://rustup.rs).
+To build it from source you need Rust 1.89 or later, preferably via [rustup](https://rustup.rs).
 
 Then run in a terminal:
 
