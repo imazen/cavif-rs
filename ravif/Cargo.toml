@@ -35,4 +35,4 @@ imazen = []
 
 [dev-dependencies]
 avif-parse = "2.0.0"
-zenavif-parse = { version = "0.4", path = "../../zenavif-parse" }
+zenavif-parse = { version = "0.5.0", path = "../../zenavif-parse" }
