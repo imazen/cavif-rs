@@ -1,8 +1,4 @@
-# zenravif
-
-[![crates.io](https://img.shields.io/crates/v/zenravif.svg)](https://crates.io/crates/zenravif)
-[![docs.rs](https://docs.rs/zenravif/badge.svg)](https://docs.rs/zenravif)
-[![License: AGPL-3.0](https://img.shields.io/badge/license-AGPL--3.0-blue.svg?style=for-the-badge)](LICENSE-AGPL3)
+# zenravif ![CI](https://img.shields.io/github/actions/workflow/status/imazen/cavif-rs/ci.yml?style=flat-square&label=CI) ![crates.io](https://img.shields.io/crates/v/zenravif?style=flat-square) [![lib.rs](https://img.shields.io/crates/v/zenravif?style=flat-square&label=lib.rs&color=blue)](https://lib.rs/crates/zenravif) ![docs.rs](https://img.shields.io/docsrs/zenravif?style=flat-square) ![license](https://img.shields.io/crates/l/zenravif?style=flat-square)
 
 Pure Rust AVIF encoder. Wraps [zenrav1e](https://lib.rs/crates/zenrav1e) (AV1 encoder) and [zenavif-serialize](https://lib.rs/crates/zenavif-serialize) (AVIF container muxer) to produce AVIF files from RGB/RGBA pixels.
 
