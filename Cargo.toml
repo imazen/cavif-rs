@@ -1,5 +1,6 @@
 [package]
 name = "cavif"
+publish = false
 description = "Encodes images in AVIF format (image2avif converter) using a pure-Rust encoder."
 version = "1.7.0"
 authors = ["Kornel Lesiński <kornel@geekhood.net>"]
