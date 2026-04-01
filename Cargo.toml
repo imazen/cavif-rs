@@ -19,7 +19,7 @@ clap = { version = "4.5.40", default-features = false, features = ["color", "sug
 cocoa_image = { version = "1.1.0", optional = true }
 imgref = "1.12"
 load_image = "3.2.1"
-zenravif = { version = "0.1.1", path = "./ravif", default-features = false, features = ["threading"] }
+zenravif = { version = "0.1.1", default-features = false, features = ["threading"] }
 rayon = "1.11.0"
 rgb = { version = "0.8.52", default-features = false }
 

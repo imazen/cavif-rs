@@ -14,9 +14,9 @@ include = ["README.md", "LICENSE-AGPL3", "LICENSE-COMMERCIAL", "Cargo.toml", "/s
 rust-version = "1.93"
 
 [dependencies]
-zenavif-serialize = { version = "0.1", path = "../../zenavif-serialize" }
+zenavif-serialize = { version = "0.1"}
 imgref = "1.12.0"
-zenrav1e = { version = "0.1.1", path = "../../zenrav1e", default-features = false }
+zenrav1e = { version = "0.1.2", default-features = false }
 rayon = { version = "1.11.0", optional = true }
 rgb = { version = "0.8", default-features = false }
 loop9 = "0.1.5"
@@ -24,7 +24,7 @@ quick-error = "2.0.1"
 almost-enough = { version = "0.4.3", optional = true, default-features = false, features = ["alloc"] }
 
 [target.'cfg(target = "wasm32-unknown-unknown")'.dependencies]
-zenrav1e = { version = "0.1", path = "../../zenrav1e", default-features = false, features = ["wasm"] }
+zenrav1e = { version = "0.1.2", default-features = false, features = ["wasm"] }
 
 [features]
 default = ["asm", "threading"]
@@ -35,7 +35,7 @@ imazen = []
 
 [dev-dependencies]
 avif-parse = "2.0.0"
-zenavif-parse = { version = "0.5.1", path = "../../zenavif-parse" }
+zenavif-parse = "0.5.2"
 
 [package.metadata.docs.rs]
 targets = ["x86_64-unknown-linux-gnu"]
