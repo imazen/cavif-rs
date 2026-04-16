@@ -1279,7 +1279,11 @@ impl SpeedTweaks {
                 _ => (16, 16),
             }),
 
-            complex_prediction_modes: Some(speed <= 1), // 2x-3x slower, 2% better
+            // ComplexAll only affects inter frames — for AVIF still images
+            // (all keyframes), ComplexKeyframes already searches all intra modes.
+            // ComplexAll triggers filter_intra RDO paths with broken cost estimation
+            // (see zenrav1e#5), causing 12 dB PSNR regression at speed 1.
+            complex_prediction_modes: Some(false),
             sgr_complexity_full: Some(speed <= 2), // 15% slower, barely improves anything -/+1%
 
             encode_bottomup: Some(speed <= 2), // may be costly (+60%), may even backfire
