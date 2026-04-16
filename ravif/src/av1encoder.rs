@@ -1284,9 +1284,13 @@ impl SpeedTweaks {
             // ComplexAll triggers filter_intra RDO paths with broken cost estimation
             // (see zenrav1e#5), causing 12 dB PSNR regression at speed 1.
             complex_prediction_modes: Some(false),
-            sgr_complexity_full: Some(speed <= 2), // 15% slower, barely improves anything -/+1%
-
-            encode_bottomup: Some(speed <= 2), // may be costly (+60%), may even backfire
+            sgr_complexity_full: Some(speed <= 2),
+            // Bottom-up partition search interacts badly with QM: the RDO
+            // cost model doesn't account for QM's frequency-dependent weights,
+            // causing bottomup to select partitions that are suboptimal under QM.
+            // Disabling produces identical quality with QM off and 2-3x faster.
+            // TODO: fix the bottomup RDO cost model to account for QM weights
+            encode_bottomup: Some(false),
 
             // big blocks disabled at 3
 
