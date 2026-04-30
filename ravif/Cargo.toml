@@ -1,7 +1,7 @@
 [package]
 name = "zenravif"
 description = "Pure Rust AVIF encoder wrapping zenrav1e with still image, animation, HDR, and metadata support"
-version = "0.1.2"
+version = "0.1.3"
 authors = ["Kornel Lesiński <kornel@geekhood.net>", "Lilith River <lilith@imazen.io>"]
 edition = "2024"
 license = "AGPL-3.0-only OR LicenseRef-Imazen-Commercial"

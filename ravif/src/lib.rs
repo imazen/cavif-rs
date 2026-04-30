@@ -689,3 +689,64 @@ fn hdr10_full_pipeline() {
     assert_eq!(mdcv.max_luminance, 10000000);
     assert_eq!(mdcv.min_luminance, 50);
 }
+
+#[cfg(all(test, feature = "imazen"))]
+#[test]
+fn deep_knob_overrides_change_output_bytes() {
+    // Smoke test: at least one of the 4 new override knobs should perturb
+    // the encoded byte stream vs baseline at the same speed/q.
+    let img: imgref::ImgVec<RGB8> = imgref::ImgVec::new(
+        (0..96)
+            .flat_map(|y| {
+                (0..96).map(move |x| RGB8::new(x as u8 * 2, y as u8 * 2, ((x ^ y) & 0xFF) as u8))
+            })
+            .collect(),
+        96,
+        96,
+    );
+    let encode = |enc: Encoder<'_>| -> Vec<u8> {
+        enc.with_quality(60.0)
+            .with_speed(6)
+            .with_num_threads(Some(1))
+            .encode_rgb(img.as_ref())
+            .unwrap()
+            .avif_file
+    };
+
+    let baseline = encode(Encoder::new());
+
+    let cases: &[(&str, fn() -> Encoder<'static>)] = &[
+        ("partition_range narrow", || {
+            Encoder::new().with_partition_range(Some((4, 16)))
+        }),
+        ("partition_range wide", || {
+            Encoder::new().with_partition_range(Some((16, 64)))
+        }),
+        ("lrf off", || Encoder::new().with_lrf(Some(false))),
+        ("lrf on", || Encoder::new().with_lrf(Some(true))),
+        ("fast_deblock on", || {
+            Encoder::new().with_fast_deblock(Some(true))
+        }),
+        ("fast_deblock off", || {
+            Encoder::new().with_fast_deblock(Some(false))
+        }),
+    ];
+
+    let mut any_changed = false;
+    for (label, build) in cases {
+        let bytes = encode(build());
+        let same = bytes == baseline;
+        if !same {
+            any_changed = true;
+        }
+        println!(
+            "{label}: baseline={} bytes={} same={same}",
+            baseline.len(),
+            bytes.len()
+        );
+    }
+    assert!(
+        any_changed,
+        "at least one deep-knob override should perturb the bitstream"
+    );
+}

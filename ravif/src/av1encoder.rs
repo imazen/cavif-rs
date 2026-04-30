@@ -204,6 +204,24 @@ pub struct Encoder<'exif_slice> {
     /// Override bottom-up partition search (vs top-down at speed ≥4)
     #[cfg(feature = "imazen")]
     override_encode_bottomup: Option<bool>,
+    /// Override partition block-size range (min, max) in pixels.
+    /// Valid sizes: 4, 8, 16, 32, 64, 128. Smaller mins help screen/text;
+    /// larger maxes help smooth photo content.
+    #[cfg(feature = "imazen")]
+    override_partition_range: Option<(u8, u8)>,
+    /// Override prediction-modes setting. `Some(true)` = ComplexAll (slowest,
+    /// all intra modes). `Some(false)` = Simple (fastest). `None` = preset.
+    /// Note: ComplexAll currently disabled by default for stills (zenrav1e#5).
+    #[cfg(feature = "imazen")]
+    override_complex_prediction_modes: Option<bool>,
+    /// Override loop restoration filter (Wiener / SGR). Helps smooth/noisy
+    /// content; can soften line art.
+    #[cfg(feature = "imazen")]
+    override_lrf: Option<bool>,
+    /// Override fast deblock vs full deblock. Off (full) preserves edges
+    /// better; on (fast) reduces blocking artifacts faster.
+    #[cfg(feature = "imazen")]
+    override_fast_deblock: Option<bool>,
     /// Enable trellis quantization (Viterbi DP coefficient optimization)
     #[cfg(feature = "imazen")]
     enable_trellis: bool,
@@ -260,6 +278,14 @@ impl<'exif_slice> Default for Encoder<'exif_slice> {
             override_segmentation_complex: None,
             #[cfg(feature = "imazen")]
             override_encode_bottomup: None,
+            #[cfg(feature = "imazen")]
+            override_partition_range: None,
+            #[cfg(feature = "imazen")]
+            override_complex_prediction_modes: None,
+            #[cfg(feature = "imazen")]
+            override_lrf: None,
+            #[cfg(feature = "imazen")]
+            override_fast_deblock: None,
             #[cfg(feature = "imazen")]
             enable_trellis: false,
         }
@@ -702,6 +728,47 @@ impl<'exif_slice> Encoder<'exif_slice> {
         self
     }
 
+    /// Override partition block-size range. `min` and `max` must each be
+    /// one of `{4, 8, 16, 32, 64, 128}` and `min <= max`. Setting a narrow
+    /// fine range (e.g. `(4, 16)`) helps text/screen content; a coarse
+    /// range (e.g. `(32, 64)`) speeds up smooth photo encoding.
+    /// `None` keeps the speed preset's default.
+    #[cfg(feature = "imazen")]
+    #[must_use]
+    pub fn with_partition_range(mut self, range: Option<(u8, u8)>) -> Self {
+        self.override_partition_range = range;
+        self
+    }
+
+    /// Override prediction modes. `Some(true)` = ComplexAll (search every
+    /// intra mode). `Some(false)` = Simple (DC + smooth + nearest only).
+    /// `None` keeps the speed preset's default (currently ComplexKeyframes
+    /// for stills via the imazen still-image guard).
+    #[cfg(feature = "imazen")]
+    #[must_use]
+    pub fn with_complex_prediction_modes(mut self, enable: Option<bool>) -> Self {
+        self.override_complex_prediction_modes = enable;
+        self
+    }
+
+    /// Override loop restoration filter (Wiener / Self-Guided). Helps
+    /// smooth/noisy content; can over-soften line art and text.
+    #[cfg(feature = "imazen")]
+    #[must_use]
+    pub fn with_lrf(mut self, enable: Option<bool>) -> Self {
+        self.override_lrf = enable;
+        self
+    }
+
+    /// Override fast vs full deblock filter search. `Some(true)` = fast
+    /// (less search). `Some(false)` = full (better edge preservation).
+    #[cfg(feature = "imazen")]
+    #[must_use]
+    pub fn with_fast_deblock(mut self, enable: Option<bool>) -> Self {
+        self.override_fast_deblock = enable;
+        self
+    }
+
     /// Enable trellis quantization (Viterbi DP coefficient optimization).
     /// Optimizes coefficient levels jointly using rate-distortion cost.
     #[cfg(feature = "imazen")]
@@ -979,6 +1046,14 @@ impl Encoder<'_> {
         let override_segmentation_complex = self.override_segmentation_complex;
         #[cfg(feature = "imazen")]
         let override_encode_bottomup = self.override_encode_bottomup;
+        #[cfg(feature = "imazen")]
+        let override_partition_range = self.override_partition_range;
+        #[cfg(feature = "imazen")]
+        let override_complex_prediction_modes = self.override_complex_prediction_modes;
+        #[cfg(feature = "imazen")]
+        let override_lrf = self.override_lrf;
+        #[cfg(feature = "imazen")]
+        let override_fast_deblock = self.override_fast_deblock;
         let encode_color = move || {
             #[cfg_attr(not(feature = "imazen"), allow(unused_mut))]
             let mut speed = SpeedTweaks::from_my_preset(self.speed, self.quantizer);
@@ -992,6 +1067,12 @@ impl Encoder<'_> {
                     speed.segmentation = Some(if v { SegmentationLevel::Complex } else { SegmentationLevel::Simple });
                 }
                 if let Some(v) = override_encode_bottomup { speed.encode_bottomup = Some(v); }
+                if let Some(r) = override_partition_range { speed.partition_range = Some(r); }
+                if let Some(v) = override_complex_prediction_modes {
+                    speed.complex_prediction_modes = Some(v);
+                }
+                if let Some(v) = override_lrf { speed.lrf = Some(v); }
+                if let Some(v) = override_fast_deblock { speed.fast_deblock = Some(v); }
             }
             encode_to_av1::<P>(
                 &Av1EncodeConfig {
