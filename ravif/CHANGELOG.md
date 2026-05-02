@@ -2,6 +2,8 @@
 
 ## [Unreleased]
 
+## [0.1.3] - 2026-05-02
+
 ### Added
 - `Encoder::validate()` method returning `Result<(), ValidationError>` for
   fail-fast configuration checking. Existing `encode_*` methods retain their
@@ -13,17 +15,6 @@
   `chroma_subsampling=Yuv420` × `color_model=RGB` cross-parameter rejection
   the encode path already returns as `Error::Unsupported`. Each variant is
   cited against the zenrav1e / zenavif-serialize source it mirrors.
-
-### Changed
-- `with_quality`, `with_alpha_quality`, `with_libavif_quality`, `with_speed`,
-  and `with_num_threads` no longer panic on out-of-range inputs. They now
-  silently accept the value and let the encode path clamp (matching the
-  documented "use `validate()` for fail-fast" pattern). Callers that relied
-  on the panic for input validation should call `validate()` instead.
-
-## [0.1.3] - 2026-05-02
-
-### Added
 - New `__expert` cargo feature exposing `expert::InternalParams`, an
   `Option<T>` struct of speed-preset overrides for content-dependent
   internal knobs:
@@ -48,6 +39,13 @@
 - 14-case `expert_tests` module covering per-field perturbation,
   idempotency, all-fields-set valid encode, default-equals-baseline,
   and wholesale reset semantics for `with_internal_params` (1e02e9e).
+
+### Changed
+- `with_quality`, `with_alpha_quality`, `with_libavif_quality`, `with_speed`,
+  and `with_num_threads` no longer panic on out-of-range inputs. They
+  silently accept the value and let the encode path clamp (matching the
+  documented "use `validate()` for fail-fast" pattern). Callers that
+  relied on the panic for input validation should call `validate()` instead.
 
 ### Fixed
 - `partition_range` documentation now reflects zenrav1e's actual
