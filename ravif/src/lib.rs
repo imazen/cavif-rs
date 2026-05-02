@@ -71,6 +71,9 @@
 mod av1encoder;
 mod animated;
 
+#[cfg(feature = "__expert")]
+pub mod expert;
+
 mod cancel;
 pub use cancel::CancellationToken;
 #[cfg(feature = "stop")]
@@ -690,10 +693,12 @@ fn hdr10_full_pipeline() {
     assert_eq!(mdcv.min_luminance, 50);
 }
 
-#[cfg(all(test, feature = "imazen"))]
+#[cfg(all(test, feature = "__expert"))]
 #[test]
 fn deep_knob_overrides_change_output_bytes() {
-    // Smoke test: at least one of the 4 new override knobs should perturb
+    use crate::expert::InternalParams;
+
+    // Smoke test: at least one InternalParams override should perturb
     // the encoded byte stream vs baseline at the same speed/q.
     let img: imgref::ImgVec<RGB8> = imgref::ImgVec::new(
         (0..96)
@@ -715,26 +720,29 @@ fn deep_knob_overrides_change_output_bytes() {
 
     let baseline = encode(Encoder::new());
 
-    let cases: &[(&str, fn() -> Encoder<'static>)] = &[
-        ("partition_range narrow", || {
-            Encoder::new().with_partition_range(Some((4, 16)))
-        }),
-        ("partition_range wide", || {
-            Encoder::new().with_partition_range(Some((16, 64)))
-        }),
-        ("lrf off", || Encoder::new().with_lrf(Some(false))),
-        ("lrf on", || Encoder::new().with_lrf(Some(true))),
-        ("fast_deblock on", || {
-            Encoder::new().with_fast_deblock(Some(true))
-        }),
-        ("fast_deblock off", || {
-            Encoder::new().with_fast_deblock(Some(false))
-        }),
+    let mk = |f: fn(&mut InternalParams)| -> InternalParams {
+        let mut p = InternalParams::default();
+        f(&mut p);
+        p
+    };
+    let cases: &[(&str, InternalParams)] = &[
+        (
+            "partition_range narrow",
+            mk(|p| p.partition_range = Some((4, 16))),
+        ),
+        (
+            "partition_range wide",
+            mk(|p| p.partition_range = Some((16, 64))),
+        ),
+        ("lrf off", mk(|p| p.lrf = Some(false))),
+        ("lrf on", mk(|p| p.lrf = Some(true))),
+        ("fast_deblock on", mk(|p| p.fast_deblock = Some(true))),
+        ("fast_deblock off", mk(|p| p.fast_deblock = Some(false))),
     ];
 
     let mut any_changed = false;
-    for (label, build) in cases {
-        let bytes = encode(build());
+    for (label, params) in cases {
+        let bytes = encode(Encoder::new().with_internal_params(params.clone()));
         let same = bytes == baseline;
         if !same {
             any_changed = true;
@@ -747,6 +755,6 @@ fn deep_knob_overrides_change_output_bytes() {
     }
     assert!(
         any_changed,
-        "at least one deep-knob override should perturb the bitstream"
+        "at least one InternalParams override should perturb the bitstream"
     );
 }

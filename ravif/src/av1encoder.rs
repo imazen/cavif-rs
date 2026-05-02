@@ -728,44 +728,21 @@ impl<'exif_slice> Encoder<'exif_slice> {
         self
     }
 
-    /// Override partition block-size range. `min` and `max` must each be
-    /// one of `{4, 8, 16, 32, 64, 128}` and `min <= max`. Setting a narrow
-    /// fine range (e.g. `(4, 16)`) helps text/screen content; a coarse
-    /// range (e.g. `(32, 64)`) speeds up smooth photo encoding.
-    /// `None` keeps the speed preset's default.
-    #[cfg(feature = "imazen")]
+    /// Apply expert-only [`crate::expert::InternalParams`].
+    ///
+    /// **Unstable surface** — may change in any patch release; see
+    /// [`crate::expert`] module docs for the contract. Each `Some(_)`
+    /// field overrides a speed-preset default; each `None` leaves the
+    /// preset's value untouched. Calling this multiple times overwrites
+    /// previously-set fields wholesale (the struct is the unit of
+    /// configuration, not the individual fields).
+    #[cfg(feature = "__expert")]
     #[must_use]
-    pub fn with_partition_range(mut self, range: Option<(u8, u8)>) -> Self {
-        self.override_partition_range = range;
-        self
-    }
-
-    /// Override prediction modes. `Some(true)` = ComplexAll (search every
-    /// intra mode). `Some(false)` = Simple (DC + smooth + nearest only).
-    /// `None` keeps the speed preset's default (currently ComplexKeyframes
-    /// for stills via the imazen still-image guard).
-    #[cfg(feature = "imazen")]
-    #[must_use]
-    pub fn with_complex_prediction_modes(mut self, enable: Option<bool>) -> Self {
-        self.override_complex_prediction_modes = enable;
-        self
-    }
-
-    /// Override loop restoration filter (Wiener / Self-Guided). Helps
-    /// smooth/noisy content; can over-soften line art and text.
-    #[cfg(feature = "imazen")]
-    #[must_use]
-    pub fn with_lrf(mut self, enable: Option<bool>) -> Self {
-        self.override_lrf = enable;
-        self
-    }
-
-    /// Override fast vs full deblock filter search. `Some(true)` = fast
-    /// (less search). `Some(false)` = full (better edge preservation).
-    #[cfg(feature = "imazen")]
-    #[must_use]
-    pub fn with_fast_deblock(mut self, enable: Option<bool>) -> Self {
-        self.override_fast_deblock = enable;
+    pub fn with_internal_params(mut self, params: crate::expert::InternalParams) -> Self {
+        self.override_partition_range = params.partition_range;
+        self.override_complex_prediction_modes = params.complex_prediction_modes;
+        self.override_lrf = params.lrf;
+        self.override_fast_deblock = params.fast_deblock;
         self
     }
 
