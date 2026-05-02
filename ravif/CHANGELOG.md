@@ -2,6 +2,25 @@
 
 ## [Unreleased]
 
+### Added
+- `Encoder::validate()` method returning `Result<(), ValidationError>` for
+  fail-fast configuration checking. Existing `encode_*` methods retain their
+  silent clamping behaviour; call `validate()` first when a batch job should
+  reject out-of-range configs before spending compute. `ValidationError` is
+  `#[non_exhaustive]` and covers `quality` / `alpha_quality` /
+  `libavif_quality` / `speed` / `num_threads` / `rotation` / `mirror` /
+  `vaq_strength` / `seg_boost` / `partition_range`, plus the
+  `chroma_subsampling=Yuv420` × `color_model=RGB` cross-parameter rejection
+  the encode path already returns as `Error::Unsupported`. Each variant is
+  cited against the zenrav1e / zenavif-serialize source it mirrors.
+
+### Changed
+- `with_quality`, `with_alpha_quality`, `with_libavif_quality`, `with_speed`,
+  and `with_num_threads` no longer panic on out-of-range inputs. They now
+  silently accept the value and let the encode path clamp (matching the
+  documented "use `validate()` for fail-fast" pattern). Callers that relied
+  on the panic for input validation should call `validate()` instead.
+
 ## [0.1.3] - 2026-05-02
 
 ### Added

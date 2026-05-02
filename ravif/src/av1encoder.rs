@@ -123,6 +123,13 @@ pub struct Encoder<'exif_slice> {
     pub(crate) quantizer: u8,
     /// 0-255 scale
     pub(crate) alpha_quantizer: u8,
+    /// User-supplied quality value, retained verbatim for [`Encoder::validate`].
+    /// `None` means the setter was never called (i.e. default).
+    pub(crate) quality_input: Option<f32>,
+    /// User-supplied alpha quality, retained for validation.
+    pub(crate) alpha_quality_input: Option<f32>,
+    /// User-supplied libavif quality, retained for validation.
+    pub(crate) libavif_quality_input: Option<f32>,
     /// rav1e preset 1 (slow) 10 (fast but crappy)
     pub(crate) speed: u8,
     /// True if RGBA input has already been premultiplied. It inserts appropriate metadata.
@@ -232,6 +239,9 @@ impl<'exif_slice> Default for Encoder<'exif_slice> {
         Self {
             quantizer: quality_to_quantizer(80.),
             alpha_quantizer: quality_to_quantizer(80.),
+            quality_input: None,
+            alpha_quality_input: None,
+            libavif_quality_input: None,
             speed: 5,
             output_depth: BitDepth::default(),
             chroma_subsampling: ChromaSubsampling::default(),
@@ -300,12 +310,14 @@ impl<'exif_slice> Encoder<'exif_slice> {
         Self::default()
     }
 
-    /// Quality `1..=100`. Panics if out of range.
+    /// Quality `1..=100`. Out-of-range values are silently clamped to the
+    /// valid range during encoding; call [`Encoder::validate`] before encoding
+    /// for fail-fast behaviour.
     #[inline(always)]
     #[track_caller]
     #[must_use]
     pub fn with_quality(mut self, quality: f32) -> Self {
-        assert!((1. ..=100.).contains(&quality));
+        self.quality_input = Some(quality);
         self.quantizer = quality_to_quantizer(quality);
         self
     }
@@ -329,12 +341,14 @@ impl<'exif_slice> Encoder<'exif_slice> {
         self
     }
 
-    /// Quality for the alpha channel only. `1..=100`. Panics if out of range.
+    /// Quality for the alpha channel only. `1..=100`. Out-of-range values are
+    /// silently clamped during encoding; call [`Encoder::validate`] before
+    /// encoding for fail-fast behaviour.
     #[inline(always)]
     #[track_caller]
     #[must_use]
     pub fn with_alpha_quality(mut self, quality: f32) -> Self {
-        assert!((1. ..=100.).contains(&quality));
+        self.alpha_quality_input = Some(quality);
         self.alpha_quantizer = quality_to_quantizer(quality);
         self
     }
@@ -356,8 +370,8 @@ impl<'exif_slice> Encoder<'exif_slice> {
     #[track_caller]
     #[must_use]
     pub fn with_libavif_quality(mut self, quality: f32) -> Self {
-        assert!((1. ..=100.).contains(&quality));
-        let q = quality.clamp(0., 100.);
+        self.libavif_quality_input = Some(quality);
+        let q = quality.clamp(1., 100.);
         // Use exact libavif mapping: qindex = (100 - q) * 255 / 100
         self.quantizer = ((100. - q) * 255. / 100.).round() as u8;
         self
@@ -366,12 +380,13 @@ impl<'exif_slice> Encoder<'exif_slice> {
     /// * 1 = very very slow, but max compression.
     /// * 10 = quick, but larger file sizes and lower quality.
     ///
-    /// Panics if outside `1..=10`.
+    /// Values outside `1..=10` are silently accepted (the encoder treats
+    /// `speed > 10` as the fastest preset and `speed = 0` as the slowest).
+    /// Call [`Encoder::validate`] before encoding for fail-fast behaviour.
     #[inline(always)]
     #[track_caller]
     #[must_use]
     pub fn with_speed(mut self, speed: u8) -> Self {
-        assert!((1..=10).contains(&speed));
         self.speed = speed;
         self
     }
@@ -400,7 +415,6 @@ impl<'exif_slice> Encoder<'exif_slice> {
     #[track_caller]
     #[must_use]
     pub fn with_num_threads(mut self, num_threads: Option<usize>) -> Self {
-        assert!(num_threads.is_none_or(|n| n > 0));
         self.threads = num_threads;
         self
     }
@@ -753,6 +767,125 @@ impl<'exif_slice> Encoder<'exif_slice> {
     pub fn with_trellis(mut self, enable: bool) -> Self {
         self.enable_trellis = enable;
         self
+    }
+
+    /// Validate the configuration without encoding.
+    ///
+    /// Returns `Err(ValidationError)` for the **first** failure found, in
+    /// roughly the order parameters were configured. Returns `Ok(())` when
+    /// every parameter is in its accepted range and no cross-parameter
+    /// invariant is violated.
+    ///
+    /// The existing `encode_*` methods clamp / mask out-of-range values
+    /// silently. Use `validate()` before encoding when you need fail-fast
+    /// behaviour for batch jobs that should not spend compute on
+    /// configurations that won't be respected anyway.
+    ///
+    /// # Example
+    ///
+    /// ```
+    /// use zenravif::Encoder;
+    /// let enc = Encoder::new().with_quality(150.0); // clamped at encode time
+    /// assert!(enc.validate().is_err());
+    /// ```
+    pub fn validate(&self) -> Result<(), crate::ValidationError> {
+        use crate::validate as v;
+        use crate::ValidationError as E;
+
+        if let Some(q) = self.quality_input
+            && !v::QUALITY_RANGE.contains(&q)
+        {
+            return Err(E::QualityOutOfRange {
+                value: q,
+                valid: v::QUALITY_RANGE,
+            });
+        }
+        if let Some(q) = self.alpha_quality_input
+            && !v::QUALITY_RANGE.contains(&q)
+        {
+            return Err(E::AlphaQualityOutOfRange {
+                value: q,
+                valid: v::QUALITY_RANGE,
+            });
+        }
+        if let Some(q) = self.libavif_quality_input
+            && !v::QUALITY_RANGE.contains(&q)
+        {
+            return Err(E::LibavifQualityOutOfRange {
+                value: q,
+                valid: v::QUALITY_RANGE,
+            });
+        }
+        if !v::SPEED_RANGE.contains(&self.speed) {
+            return Err(E::SpeedOutOfRange {
+                value: self.speed,
+                valid: v::SPEED_RANGE,
+            });
+        }
+        if let Some(0) = self.threads {
+            return Err(E::NumThreadsZero);
+        }
+        if let Some(angle) = self.rotation
+            && !v::ROTATION_RANGE.contains(&angle)
+        {
+            return Err(E::RotationOutOfRange {
+                value: angle,
+                valid: v::ROTATION_RANGE,
+            });
+        }
+        if let Some(axis) = self.mirror
+            && !v::MIRROR_RANGE.contains(&axis)
+        {
+            return Err(E::MirrorOutOfRange {
+                value: axis,
+                valid: v::MIRROR_RANGE,
+            });
+        }
+
+        // Cross-parameter: 4:2:0 chroma subsampling is rejected at encode
+        // time when combined with the RGB internal color model
+        // (encode_raw_planes_internal: `Error::Unsupported(..)`).
+        if matches!(self.chroma_subsampling, ChromaSubsampling::Yuv420)
+            && matches!(self.color_model, ColorModel::RGB)
+        {
+            return Err(E::MutuallyExclusive {
+                a: "chroma_subsampling=Yuv420",
+                b: "color_model=RGB",
+            });
+        }
+
+        #[cfg(feature = "imazen")]
+        {
+            // VAQ strength is clamped to 0.0..=4.0 in zenrav1e
+            // (encoder.rs apply_vaq_strength). Only meaningful when VAQ is
+            // enabled, but we still validate the stored value so that
+            // `with_vaq(false, weird_value)` is also rejected.
+            if !v::VAQ_STRENGTH_RANGE.contains(&self.vaq_strength) {
+                return Err(E::VaqStrengthOutOfRange {
+                    value: self.vaq_strength,
+                    valid: v::VAQ_STRENGTH_RANGE,
+                });
+            }
+            // seg_boost: 1.0 is the documented no-op; outside that we
+            // require zenrav1e's clamp range (encoder.rs:913).
+            if (self.seg_boost - 1.0).abs() > f64::EPSILON
+                && !v::SEG_BOOST_RANGE.contains(&self.seg_boost)
+            {
+                return Err(E::SegBoostOutOfRange {
+                    value: self.seg_boost,
+                    valid: v::SEG_BOOST_RANGE,
+                });
+            }
+            if let Some((min, max)) = self.override_partition_range
+                && (!v::is_valid_partition_size(min)
+                    || !v::is_valid_partition_size(max)
+                    || min > max)
+            {
+                return Err(E::PartitionRangeInvalid { min, max });
+            }
+        }
+
+        Ok(())
     }
 }
 

@@ -74,6 +74,9 @@ mod animated;
 #[cfg(feature = "__expert")]
 pub mod expert;
 
+mod validate;
+pub use validate::ValidationError;
+
 mod cancel;
 pub use cancel::CancellationToken;
 #[cfg(feature = "stop")]
