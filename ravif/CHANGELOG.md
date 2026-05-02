@@ -20,6 +20,24 @@
   surface — anything in the `expert` module may change without semver
   bumps. Used by the zenavif rav1e knob predictor MLP training
   harness; not for production code.
+- Theory-of-operation docs for each `InternalParams` field covering
+  pipeline stage, override scenarios, mechanism, and speed-preset
+  interaction, with citations into zenrav1e source (`encoder.rs:360`,
+  `:372`, `:2958-3242`, `rdo.rs:1351-1491`, `deblock.rs:1624-1668`)
+  and zenravif's own `SpeedTweaks::from_my_preset` overrides
+  (`av1encoder.rs:1331-1365`) (5ea5487).
+- 14-case `expert_tests` module covering per-field perturbation,
+  idempotency, all-fields-set valid encode, default-equals-baseline,
+  and wholesale reset semantics for `with_internal_params` (1e02e9e).
+
+### Fixed
+- `partition_range` documentation now reflects zenrav1e's actual
+  `max <= 64x64` constraint; passing `128` triggers a debug-mode
+  panic at `zenrav1e/src/encoder.rs:2958/3231` (1e02e9e).
+- Pre-existing dead-code warnings on the `imazen`-gated
+  `override_cdef` / `override_rdo_tx_decision` fields of
+  `Av1EncodeConfig` annotated `#[allow(dead_code)]` so the
+  `__expert`-feature clippy pass is clean (bb67188).
 
 ## [0.1.2] - 2026-04-27
 
