@@ -32,6 +32,14 @@ asm = ["zenrav1e/asm"]
 threading = ["dep:rayon", "zenrav1e/threading"]
 stop = ["zenrav1e/stop", "dep:almost-enough"]
 imazen = []
+# Expert / unstable: exposes `expert::InternalParams` for codec
+# calibration sweeps + the rav1e knob predictor MLP training pipeline.
+# Double-underscore prefix signals "private — do not depend on this in
+# production code." Anything in `expert` may change without semver bumps.
+# Implies `imazen` because the underlying speed-preset overrides
+# (CDEF / RDO / segmentation / partition_range / etc.) live behind that
+# feature gate.
+__expert = ["imazen"]
 
 [dev-dependencies]
 avif-parse = "2.0.0"

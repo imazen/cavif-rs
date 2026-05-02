@@ -71,6 +71,12 @@
 mod av1encoder;
 mod animated;
 
+#[cfg(feature = "__expert")]
+pub mod expert;
+
+mod validate;
+pub use validate::ValidationError;
+
 mod cancel;
 pub use cancel::CancellationToken;
 #[cfg(feature = "stop")]
@@ -690,63 +696,281 @@ fn hdr10_full_pipeline() {
     assert_eq!(mdcv.min_luminance, 50);
 }
 
-#[cfg(all(test, feature = "imazen"))]
-#[test]
-fn deep_knob_overrides_change_output_bytes() {
-    // Smoke test: at least one of the 4 new override knobs should perturb
-    // the encoded byte stream vs baseline at the same speed/q.
-    let img: imgref::ImgVec<RGB8> = imgref::ImgVec::new(
-        (0..96)
-            .flat_map(|y| {
-                (0..96).map(move |x| RGB8::new(x as u8 * 2, y as u8 * 2, ((x ^ y) & 0xFF) as u8))
-            })
-            .collect(),
-        96,
-        96,
-    );
-    let encode = |enc: Encoder<'_>| -> Vec<u8> {
-        enc.with_quality(60.0)
+#[cfg(all(test, feature = "__expert"))]
+mod expert_tests {
+    //! Permutation, idempotency, default-equivalence, and reset
+    //! coverage for [`crate::expert::InternalParams`].
+    //!
+    //! All tests use a deterministic 96×96 mixed-content RGB image at
+    //! `with_quality(60.0).with_speed(6).with_num_threads(Some(1))` so
+    //! byte-for-byte equality comparisons are stable.
+
+    use super::*;
+    use crate::expert::InternalParams;
+
+    fn synthetic_image() -> imgref::ImgVec<RGB8> {
+        imgref::ImgVec::new(
+            (0..96)
+                .flat_map(|y| {
+                    (0..96).map(move |x| {
+                        RGB8::new(x as u8 * 2, y as u8 * 2, ((x ^ y) & 0xFF) as u8)
+                    })
+                })
+                .collect(),
+            96,
+            96,
+        )
+    }
+
+    fn encode_with(params: Option<InternalParams>) -> Vec<u8> {
+        let img = synthetic_image();
+        let mut enc = Encoder::new()
+            .with_quality(60.0)
             .with_speed(6)
-            .with_num_threads(Some(1))
-            .encode_rgb(img.as_ref())
-            .unwrap()
-            .avif_file
-    };
-
-    let baseline = encode(Encoder::new());
-
-    let cases: &[(&str, fn() -> Encoder<'static>)] = &[
-        ("partition_range narrow", || {
-            Encoder::new().with_partition_range(Some((4, 16)))
-        }),
-        ("partition_range wide", || {
-            Encoder::new().with_partition_range(Some((16, 64)))
-        }),
-        ("lrf off", || Encoder::new().with_lrf(Some(false))),
-        ("lrf on", || Encoder::new().with_lrf(Some(true))),
-        ("fast_deblock on", || {
-            Encoder::new().with_fast_deblock(Some(true))
-        }),
-        ("fast_deblock off", || {
-            Encoder::new().with_fast_deblock(Some(false))
-        }),
-    ];
-
-    let mut any_changed = false;
-    for (label, build) in cases {
-        let bytes = encode(build());
-        let same = bytes == baseline;
-        if !same {
-            any_changed = true;
+            .with_num_threads(Some(1));
+        if let Some(p) = params {
+            enc = enc.with_internal_params(p);
         }
-        println!(
-            "{label}: baseline={} bytes={} same={same}",
-            baseline.len(),
-            bytes.len()
+        enc.encode_rgb(img.as_ref()).unwrap().avif_file
+    }
+
+    fn mk(f: impl FnOnce(&mut InternalParams)) -> InternalParams {
+        let mut p = InternalParams::default();
+        f(&mut p);
+        p
+    }
+
+    // --- Per-field coverage: each value should perturb the bitstream
+    //     vs. the baseline (no `with_internal_params` call). ---
+
+    #[test]
+    fn partition_range_narrow_encodes_validly() {
+        // Default at speed 6 is (8, 16). Widening the lower bound to
+        // (4, 16) lets the encoder consider 4×4 partitions; whether
+        // those win RDO depends on the content. For this synthetic
+        // 96×96 image at Q60 the encoder happens to pick the same
+        // partitions, so byte equality is OK — what matters is that
+        // the override doesn't crash and produces a valid file.
+        let bytes = encode_with(Some(mk(|p| p.partition_range = Some((4, 16)))));
+        assert!(bytes.len() > 100, "(4,16) encode should produce a non-trivial file");
+        assert_eq!(&bytes[4..8], b"ftyp");
+    }
+
+    #[test]
+    fn partition_range_coarse_changes_bytes() {
+        // (16, 64) excludes the default's 8×8 lower bound and adds
+        // 32×32 / 64×64 — guaranteed to pick different partitions
+        // than (8, 16) on a non-trivial image.
+        let baseline = encode_with(None);
+        let bytes = encode_with(Some(mk(|p| p.partition_range = Some((16, 64)))));
+        assert_ne!(
+            bytes, baseline,
+            "partition_range=(16,64) should differ from the (8,16) preset default"
+        );
+        assert!(!bytes.is_empty());
+    }
+
+    #[test]
+    fn partition_range_full_changes_bytes() {
+        // Full (4, 64) range — widest zenrav1e currently accepts.
+        // Adds 32×32 / 64×64 to the (8, 16) default, which on this
+        // image picks different partitions and perturbs the bitstream.
+        let baseline = encode_with(None);
+        let bytes = encode_with(Some(mk(|p| p.partition_range = Some((4, 64)))));
+        assert_ne!(
+            bytes, baseline,
+            "partition_range=(4,64) should differ from the (8,16) preset default"
+        );
+        assert_eq!(&bytes[4..8], b"ftyp");
+    }
+
+    #[test]
+    fn partition_range_fixed_16_changes_bytes() {
+        // (16, 16) collapses the search to a single block size — this
+        // is the mode the speed-9+ preset uses. Forcing it at speed 6
+        // should differ from the (8, 16) default.
+        let baseline = encode_with(None);
+        let bytes = encode_with(Some(mk(|p| p.partition_range = Some((16, 16)))));
+        assert_ne!(
+            bytes, baseline,
+            "partition_range=(16,16) should differ from the (8,16) preset default"
+        );
+        assert!(!bytes.is_empty());
+    }
+
+    #[test]
+    fn complex_prediction_modes_true_changes_bytes() {
+        // Default for stills is force-Simple via the imazen guard at
+        // av1encoder.rs:1344. Setting Some(true) flips to ComplexAll
+        // and SHOULD perturb the bitstream.
+        let baseline = encode_with(None);
+        let bytes = encode_with(Some(mk(|p| p.complex_prediction_modes = Some(true))));
+        assert_ne!(
+            bytes, baseline,
+            "complex_prediction_modes=Some(true) should differ from forced-Simple default"
+        );
+        assert!(!bytes.is_empty());
+    }
+
+    #[test]
+    fn complex_prediction_modes_false_matches_default() {
+        // Default is already Simple for stills, so Some(false) should
+        // be a no-op at the bitstream level.
+        let baseline = encode_with(None);
+        let bytes = encode_with(Some(mk(|p| p.complex_prediction_modes = Some(false))));
+        assert_eq!(
+            bytes, baseline,
+            "complex_prediction_modes=Some(false) should match the still-image default"
         );
     }
-    assert!(
-        any_changed,
-        "at least one deep-knob override should perturb the bitstream"
-    );
+
+    #[test]
+    fn lrf_true_changes_bytes() {
+        // At Q60 + speed 6, the preset's `low_quality && speed <= 8`
+        // gate is FALSE (Q60 ≈ qindex ~140, threshold is 150), so LRF
+        // is off by default; Some(true) should turn it on and perturb.
+        let baseline = encode_with(None);
+        let bytes = encode_with(Some(mk(|p| p.lrf = Some(true))));
+        assert_ne!(
+            bytes, baseline,
+            "lrf=Some(true) should differ from the lrf-off preset default at Q60/speed6"
+        );
+        assert!(!bytes.is_empty());
+    }
+
+    #[test]
+    fn lrf_false_explicit_matches_default() {
+        // LRF is already off at Q60+speed6 (above), so Some(false) is
+        // a no-op.
+        let baseline = encode_with(None);
+        let bytes = encode_with(Some(mk(|p| p.lrf = Some(false))));
+        assert_eq!(
+            bytes, baseline,
+            "lrf=Some(false) should match the lrf-off preset default at Q60/speed6"
+        );
+    }
+
+    #[test]
+    fn fast_deblock_true_changes_bytes() {
+        // Preset gates fast_deblock on `speed >= 7 && !high_quality`.
+        // At speed 6, default is full deblock search; Some(true) flips
+        // to the fast closed-form path.
+        let baseline = encode_with(None);
+        let bytes = encode_with(Some(mk(|p| p.fast_deblock = Some(true))));
+        assert_ne!(
+            bytes, baseline,
+            "fast_deblock=Some(true) should differ from full-search default at speed 6"
+        );
+        assert!(!bytes.is_empty());
+    }
+
+    #[test]
+    fn fast_deblock_false_explicit_matches_default() {
+        let baseline = encode_with(None);
+        let bytes = encode_with(Some(mk(|p| p.fast_deblock = Some(false))));
+        assert_eq!(
+            bytes, baseline,
+            "fast_deblock=Some(false) should match the full-search default at speed 6"
+        );
+    }
+
+    // --- Idempotency: chaining the same params twice equals once. ---
+
+    #[test]
+    fn with_internal_params_is_idempotent() {
+        let img = synthetic_image();
+        let params = mk(|p| {
+            p.partition_range = Some((4, 16));
+            p.lrf = Some(true);
+            p.fast_deblock = Some(true);
+        });
+
+        let once = Encoder::new()
+            .with_quality(60.0)
+            .with_speed(6)
+            .with_num_threads(Some(1))
+            .with_internal_params(params.clone())
+            .encode_rgb(img.as_ref())
+            .unwrap()
+            .avif_file;
+
+        let twice = Encoder::new()
+            .with_quality(60.0)
+            .with_speed(6)
+            .with_num_threads(Some(1))
+            .with_internal_params(params.clone())
+            .with_internal_params(params)
+            .encode_rgb(img.as_ref())
+            .unwrap()
+            .avif_file;
+
+        assert_eq!(
+            once, twice,
+            "applying the same InternalParams twice must equal applying it once"
+        );
+    }
+
+    // --- All fields set at once still produces a valid encode. ---
+
+    #[test]
+    fn all_fields_set_produces_valid_bytes() {
+        let bytes = encode_with(Some(mk(|p| {
+            p.partition_range = Some((4, 16));
+            p.complex_prediction_modes = Some(true);
+            p.lrf = Some(true);
+            p.fast_deblock = Some(false);
+        })));
+        assert!(
+            bytes.len() > 100,
+            "all-fields-set encode should produce a non-trivial AVIF file, got {} bytes",
+            bytes.len()
+        );
+        // Sanity: AVIF starts with an `ftyp` box; first 4 bytes are
+        // the box size, bytes 4..8 are 'ftyp'.
+        assert_eq!(&bytes[4..8], b"ftyp", "output should be a valid AVIF/MIAF container");
+    }
+
+    // --- Default = baseline: passing Default::default() must
+    //     bit-exactly match not calling with_internal_params at all. ---
+
+    #[test]
+    fn default_internal_params_equals_no_call() {
+        let baseline = encode_with(None);
+        let with_default = encode_with(Some(InternalParams::default()));
+        assert_eq!(
+            baseline, with_default,
+            "InternalParams::default() must produce bit-exact same output as not calling with_internal_params"
+        );
+    }
+
+    // --- Reset: a second wholesale call replaces all prior fields. ---
+
+    #[test]
+    fn second_call_with_default_resets_all_fields() {
+        let img = synthetic_image();
+        let baseline = encode_with(None);
+
+        // First set every field, then reset wholesale via Default.
+        let perturbing = mk(|p| {
+            p.partition_range = Some((4, 16));
+            p.complex_prediction_modes = Some(true);
+            p.lrf = Some(true);
+            p.fast_deblock = Some(true);
+        });
+
+        let after_reset = Encoder::new()
+            .with_quality(60.0)
+            .with_speed(6)
+            .with_num_threads(Some(1))
+            .with_internal_params(perturbing)
+            .with_internal_params(InternalParams::default())
+            .encode_rgb(img.as_ref())
+            .unwrap()
+            .avif_file;
+
+        assert_eq!(
+            baseline, after_reset,
+            "calling with_internal_params(Default::default()) after a perturbing call must reset all fields wholesale"
+        );
+    }
 }
