@@ -56,7 +56,11 @@
 #[derive(Default, Clone, Debug)]
 pub struct InternalParams {
     /// Partition block-size search range `(min, max)` in pixels. Each
-    /// bound must be one of `{4, 8, 16, 32, 64, 128}` and `min <= max`.
+    /// bound must be one of `{4, 8, 16, 32, 64}` and `min <= max`.
+    /// (zenrav1e currently rejects `128` via a `max <= 64×64` debug
+    /// assert in `encoder.rs:2958`/`:3231`; passing `128` triggers a
+    /// debug-mode panic. The wider 128 path is reserved for future
+    /// AV1 large-superblock support.)
     ///
     /// **Pipeline stage:** partition / mode decision. Drives the
     /// recursive AV1 superblock split during RDO. In zenrav1e the
@@ -75,9 +79,9 @@ pub struct InternalParams {
     ///   `Some((32, 64))` — the 4×4/8×8 partitions never win RDO at
     ///   high q (they pay a partition-flag cost for no distortion
     ///   improvement) and disabling them shaves encode time.
-    /// - **Calibration sweeps** want `Some((4, 128))` to expose the
-    ///   full RD frontier so a picker can learn where the boundaries
-    ///   live.
+    /// - **Calibration sweeps** want `Some((4, 64))` to expose the
+    ///   full RD frontier so a picker can learn where the partition
+    ///   boundaries live (`128` is rejected by zenrav1e — see above).
     ///
     /// **Mechanism:** the encoder's RDO loop picks the partition shape
     /// per superblock by recursing within `[min, max]`. Setting both
