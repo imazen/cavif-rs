@@ -1461,9 +1461,14 @@ struct Av1EncodeConfig {
     pub lossless: bool,
     #[cfg(feature = "imazen")]
     pub seg_boost: f64,
+    // Stored on the `Av1EncodeConfig` for forward-compat plumbing,
+    // but actually consumed via `SpeedTweaks` before the config is
+    // built — so the fields here are write-only.
     #[cfg(feature = "imazen")]
+    #[allow(dead_code)]
     pub override_cdef: Option<bool>,
     #[cfg(feature = "imazen")]
+    #[allow(dead_code)]
     pub override_rdo_tx_decision: Option<bool>,
     #[cfg(feature = "imazen")]
     pub enable_trellis: bool,
