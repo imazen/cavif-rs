@@ -2,6 +2,9 @@
 
 ## [Unreleased]
 
+### Changed
+- Add `CHANGELOG.md` to published package `include` list so crate consumers see release history
+
 ## [0.1.3] - 2026-05-02
 
 ### Added

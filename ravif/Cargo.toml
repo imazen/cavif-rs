@@ -10,7 +10,7 @@ keywords = ["avif", "encoder", "av1", "image", "animation"]
 categories = ["multimedia::images", "multimedia::encoding"]
 homepage = "https://lib.rs/crates/zenravif"
 repository = "https://github.com/imazen/cavif-rs"
-include = ["README.md", "LICENSE-AGPL3", "LICENSE-COMMERCIAL", "Cargo.toml", "/src/*.rs", "/examples/*.rs"]
+include = ["README.md", "CHANGELOG.md", "LICENSE-AGPL3", "LICENSE-COMMERCIAL", "Cargo.toml", "/src/*.rs", "/examples/*.rs"]
 rust-version = "1.93"
 
 [dependencies]
