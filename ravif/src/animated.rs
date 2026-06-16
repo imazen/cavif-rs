@@ -263,6 +263,10 @@ fn encode_sequence_av1<P: Pixel + Default>(
     is_alpha: bool,
     bit_depth: u8,
 ) -> Result<Vec<Vec<u8>>, Error> {
+    // Pre-flight: reject oversized frames before building the rav1e context.
+    // This is the shared chokepoint for every animation encode entry point.
+    enc.check_pixel_limit(width, height)?;
+
     let (quantizer, chroma_sampling) = if is_alpha {
         (enc.alpha_quantizer, ChromaSampling::Cs400)
     } else {
@@ -322,7 +326,7 @@ fn encode_sequence_av1<P: Pixel + Default>(
         vaq_strength: 1.0,
         seg_boost: 1.0,
         enable_trellis: false,
-        max_pixel_count: u64::MAX,
+        max_pixel_count: enc.max_pixels,
         speed_settings: speed.speed_settings(),
     };
 
@@ -367,6 +371,9 @@ fn make_sequence_header<P: Pixel + Default>(
     is_alpha: bool,
     bit_depth: u8,
 ) -> Result<Vec<u8>, Error> {
+    // Pre-flight: guard the standalone context built here too.
+    enc.check_pixel_limit(width, height)?;
+
     let (quantizer, chroma_sampling) = if is_alpha {
         (enc.alpha_quantizer, ChromaSampling::Cs400)
     } else {
@@ -419,7 +426,7 @@ fn make_sequence_header<P: Pixel + Default>(
         vaq_strength: 1.0,
         seg_boost: 1.0,
         enable_trellis: false,
-        max_pixel_count: u64::MAX,
+        max_pixel_count: enc.max_pixels,
         speed_settings: speed.speed_settings(),
     };
     let cfg = Config::new().with_encoder_config(config);

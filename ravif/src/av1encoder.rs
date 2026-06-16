@@ -232,6 +232,11 @@ pub struct Encoder<'exif_slice> {
     /// Enable trellis quantization (Viterbi DP coefficient optimization)
     #[cfg(feature = "imazen")]
     enable_trellis: bool,
+    /// Pre-flight pixel cap: `width * height` must not exceed this before
+    /// encoding starts. Defaults to 120 megapixels. `0` disables the cap
+    /// (unlimited). See [`Encoder::with_max_pixels`]. Also forwarded to
+    /// zenrav1e's own `max_pixel_count` guard so it isn't nulled.
+    pub(crate) max_pixels: u64,
 }
 
 impl<'exif_slice> Default for Encoder<'exif_slice> {
@@ -298,9 +303,18 @@ impl<'exif_slice> Default for Encoder<'exif_slice> {
             override_fast_deblock: None,
             #[cfg(feature = "imazen")]
             enable_trellis: false,
+            max_pixels: DEFAULT_MAX_PIXELS,
         }
     }
 }
+
+/// Default pre-flight pixel cap: 120 megapixels.
+///
+/// Large enough to admit current high-resolution phone/camera stills
+/// (e.g. 108 MP sensors) while rejecting attacker-controlled dimensions
+/// that would otherwise allocate unbounded memory before any encoding
+/// guard fires. Matches zenrav1e's own default `max_pixel_count`.
+pub const DEFAULT_MAX_PIXELS: u64 = 120_000_000;
 
 /// Builder methods
 impl<'exif_slice> Encoder<'exif_slice> {
@@ -388,6 +402,33 @@ impl<'exif_slice> Encoder<'exif_slice> {
     #[must_use]
     pub fn with_speed(mut self, speed: u8) -> Self {
         self.speed = speed;
+        self
+    }
+
+    /// Maximum number of pixels (`width * height`) any single encode is
+    /// allowed to process. The encode functions reject larger inputs
+    /// **pre-flight** — before allocating planes or building the rav1e
+    /// context — returning [`Error::TooManyPixels`].
+    ///
+    /// The default is [`DEFAULT_MAX_PIXELS`] (120 megapixels), which admits
+    /// current high-resolution stills while bounding memory for
+    /// attacker-controlled dimensions on a server. This value is also
+    /// forwarded to zenrav1e's own `max_pixel_count` guard.
+    ///
+    /// Pass `0` to **disable** the cap (unlimited). Only do this when the
+    /// dimensions are already trusted/bounded by the caller.
+    ///
+    /// ```
+    /// use zenravif::Encoder;
+    /// // Allow up to 200 megapixels:
+    /// let enc = Encoder::new().with_max_pixels(200_000_000);
+    /// // Or remove the cap entirely (trusted input only):
+    /// let unlimited = Encoder::new().with_max_pixels(0);
+    /// ```
+    #[inline(always)]
+    #[must_use]
+    pub fn with_max_pixels(mut self, max_pixels: u64) -> Self {
+        self.max_pixels = max_pixels;
         self
     }
 
@@ -891,6 +932,27 @@ impl<'exif_slice> Encoder<'exif_slice> {
 
 /// Once done with config, call one of the `encode_*` functions
 impl Encoder<'_> {
+    /// Pre-flight dimension guard. Rejects `width * height` greater than
+    /// the configured [`Encoder::with_max_pixels`] limit **before** any
+    /// plane allocation or rav1e context construction. A limit of `0`
+    /// means unlimited (the cap is disabled). Uses a saturating multiply
+    /// so an overflowing `width * height` cannot wrap past the limit.
+    #[inline]
+    pub(crate) fn check_pixel_limit(&self, width: usize, height: usize) -> Result<(), Error> {
+        if self.max_pixels == 0 {
+            return Ok(());
+        }
+        let pixels = (width as u64).saturating_mul(height as u64);
+        if pixels > self.max_pixels {
+            return Err(Error::TooManyPixels {
+                width,
+                height,
+                max_pixels: self.max_pixels,
+            });
+        }
+        Ok(())
+    }
+
     /// Make a new AVIF image from RGBA pixels (non-premultiplied, alpha last)
     ///
     /// Make the `Img` for the `buffer` like this:
@@ -912,6 +974,9 @@ impl Encoder<'_> {
     ///
     /// returns AVIF file with info about sizes about AV1 payload.
     pub fn encode_rgba(&self, in_buffer: Img<&[rgb::RGBA<u8>]>) -> Result<EncodedImage, Error> {
+        // Pre-flight: reject oversized dimensions before any pixel work
+        // (convert_alpha_8bit below scans the whole buffer).
+        self.check_pixel_limit(in_buffer.width(), in_buffer.height())?;
         let new_alpha = self.convert_alpha_8bit(in_buffer);
         let buffer = new_alpha.as_ref().map(|b| b.as_ref()).unwrap_or(in_buffer);
         let use_alpha = buffer.pixels().any(|px| px.a != 255);
@@ -996,6 +1061,8 @@ impl Encoder<'_> {
     /// returns AVIF file, size of color metadata
     #[inline]
     pub fn encode_rgb(&self, buffer: Img<&[RGB8]>) -> Result<EncodedImage, Error> {
+        // Pre-flight: reject oversized dimensions before any pixel work.
+        self.check_pixel_limit(buffer.width(), buffer.height())?;
         self.encode_rgb_internal_from_8bit(buffer.width(), buffer.height(), buffer.pixels())
     }
 
@@ -1114,6 +1181,11 @@ impl Encoder<'_> {
         color_pixel_range: PixelRange, matrix_coefficients: MatrixCoefficients,
         input_pixels_bit_depth: u8,
     ) -> Result<EncodedImage, Error> {
+        // Pre-flight: the single shared chokepoint for every still encode
+        // path (encode_rgba / encode_rgb / encode_raw_planes_{8,10,12}_bit).
+        // Rejecting oversized dimensions here — before the rav1e context is
+        // built — guarantees no public entry point can bypass the cap.
+        self.check_pixel_limit(width, height)?;
         if self.chroma_subsampling == ChromaSubsampling::Yuv420 && matrix_coefficients == MatrixCoefficients::Identity {
             return Err(Error::Unsupported("4:2:0 chroma subsampling with RGB color model"));
         }
@@ -1215,6 +1287,7 @@ impl Encoder<'_> {
                     override_rdo_tx_decision,
                     #[cfg(feature = "imazen")]
                     enable_trellis: self.enable_trellis,
+                    max_pixels: self.max_pixels,
                     #[cfg(feature = "stop")]
                     stop_token: self.stop_token.clone(),
                 },
@@ -1262,6 +1335,7 @@ impl Encoder<'_> {
                         override_rdo_tx_decision: None,
                         #[cfg(feature = "imazen")]
                         enable_trellis: false,
+                        max_pixels: self.max_pixels,
                         #[cfg(feature = "stop")]
                         stop_token: self.stop_token.clone(),
                     },
@@ -1605,6 +1679,8 @@ struct Av1EncodeConfig {
     pub override_rdo_tx_decision: Option<bool>,
     #[cfg(feature = "imazen")]
     pub enable_trellis: bool,
+    /// Forwarded to zenrav1e's `max_pixel_count` guard. `0` = unlimited.
+    pub max_pixels: u64,
     #[cfg(feature = "stop")]
     pub stop_token: Option<almost_enough::StopToken>,
 }
@@ -1692,7 +1768,10 @@ fn rav1e_config(p: &Av1EncodeConfig) -> Config {
             #[cfg(not(feature = "imazen"))]
             { false }
         },
-        max_pixel_count: u64::MAX,
+        // Forward zenravif's pixel cap to zenrav1e's own guard instead of
+        // nulling it with u64::MAX. `0` keeps the guard disabled (unlimited),
+        // matching zenrav1e's `max_pixel_count > 0` convention.
+        max_pixel_count: p.max_pixels,
         speed_settings,
     });
 
