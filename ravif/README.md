@@ -22,24 +22,101 @@ Changes from upstream:
 
 ```toml
 [dependencies]
-zenravif = "0.1"
+zenravif = "0.1.3"
 ```
 
-### Still image
+### Pixel types — where they come from
+
+`use zenravif::*;` re-exports everything you need, so you do **not** need to add
+the `rgb` or `imgref` crates as direct dependencies:
+
+- `RGB8` and `RGBA8` are re-exported from the [`rgb`](https://lib.rs/crates/rgb)
+  crate. Construct them field-by-field: `RGB8::new(r, g, b)` and
+  `RGBA8::new(r, g, b, a)` — the argument order is red, green, blue (then alpha).
+- `Img` is re-exported from the [`imgref`](https://lib.rs/crates/imgref) crate.
+  `Img::new(pixels, width, height)` wraps a tightly-packed slice with its
+  dimensions.
+
+If you already have raw `&[u8]` RGB bytes, the `rgb` crate's `ComponentSlice`
+trait gives you `as_rgb()` to view them as `&[RGB8]` — but that trait is not
+re-exported here, so add `rgb` directly if you go that route. Building `RGB8`
+values explicitly (as below) needs no extra dependency.
+
+### Still image (RGB8)
+
+For opaque images, encode 3-byte RGB directly with `encode_rgb` — there is no
+need to pad to RGBA:
 
 ```rust
 use zenravif::*;
 
-let pixels: &[RGBA8] = &[/* your pixel data */];
-let img = Img::new(pixels, width, height);
+# fn demo(width: usize, height: usize) -> Result<(), Error> {
+// RGB8::new(r, g, b) — one entry per pixel, row-major, tightly packed.
+let pixels: Vec<RGB8> = vec![RGB8::new(255, 0, 0); width * height];
+let img = Img::new(pixels.as_slice(), width, height);
 
 let result = Encoder::new()
-    .with_quality(70.0)
-    .with_speed(4)
+    .with_quality(80.0)                                  // see "Quality scale" below
+    .with_speed(5)                                       // 1 = slowest/best … 10 = fastest
+    .with_chroma_subsampling(ChromaSubsampling::Yuv420)  // 4:2:0; omit for 4:4:4 (default)
+    .encode_rgb(img)?;
+
+std::fs::write("output.avif", &result.avif_file)?;
+# Ok(()) }
+```
+
+### Still image (RGBA8)
+
+For images with transparency, use `encode_rgba` with `RGBA8` pixels:
+
+```rust
+use zenravif::*;
+
+# fn demo(width: usize, height: usize) -> Result<(), Error> {
+let pixels: Vec<RGBA8> = vec![RGBA8::new(255, 0, 0, 255); width * height];
+let img = Img::new(pixels.as_slice(), width, height);
+
+let result = Encoder::new()
+    .with_quality(80.0)
+    .with_speed(5)
     .encode_rgba(img)?;
 
 std::fs::write("output.avif", &result.avif_file)?;
+# Ok(()) }
 ```
+
+### Quality scale (`with_quality` vs `with_libavif_quality`)
+
+There are two ways to set quality, and they use **different Q scales** — passing
+the same number to each produces a different image, so pick one deliberately:
+
+- **`with_quality(q: f32)`** — `q` is in `1..=100`, and **higher means better
+  quality** (larger files). The default, if you set nothing, is `80`. This uses
+  zenravif's own non-linear quality→quantizer curve, tuned so the perceptual step
+  between adjacent values is roughly even across the range.
+- **`with_libavif_quality(q: f32)`** — also `1..=100`, higher = better, but it
+  applies the **exact libavif/avifenc linear mapping** (`qindex = (100 − q) ×
+  255 / 100`). Use this only when you want your Q numbers to line up with
+  `avifenc`'s — e.g. for apples-to-apples comparisons. At a *matched perceived
+  quality* (not a matched Q number) zenravif typically produces smaller files
+  than avifenc thanks to rav1e's efficiency.
+
+Out-of-range or zero values are silently clamped during encoding; call
+`Encoder::validate()` first if you want fail-fast behaviour instead.
+`with_alpha_quality(q)` sets the alpha plane's quality on the same `1..=100`
+scale.
+
+### Speed and chroma subsampling
+
+- **`with_speed(s: u8)`** — `s` is `1..=10` where **`1` is the slowest preset
+  with the best compression** and **`10` is the fastest with larger files**. The
+  default is `5`. (Values outside the range are accepted: `> 10` behaves like the
+  fastest preset, `0` like the slowest.)
+- **`with_chroma_subsampling(mode)`** — `ChromaSubsampling::Yuv444` (the default)
+  keeps full-resolution color; `ChromaSubsampling::Yuv420` halves chroma in both
+  dimensions, cutting file size ~25–35% with minimal loss on photographic
+  content (not recommended for text or sharp edges, and it cannot be combined
+  with the `RGB` internal color model).
 
 ### With timeout
 
@@ -47,17 +124,52 @@ std::fs::write("output.avif", &result.avif_file)?;
 use zenravif::*;
 use std::time::Duration;
 
+# fn demo(pixels: &[RGBA8], width: usize, height: usize) {
 let result = Encoder::new()
-    .with_quality(70.0)
+    .with_quality(80.0)
     .with_timeout(Duration::from_millis(500))
-    .encode_rgba(img);
+    .encode_rgba(Img::new(pixels, width, height));
 
 match result {
     Ok(encoded) => { /* use encoded.avif_file */ }
     Err(Error::Cancelled) => { /* timed out */ }
     Err(e) => { /* other error */ }
 }
+# }
 ```
+
+### Manual cancellation
+
+Construct a token with `CancellationToken::new()`, clone it, and call `.cancel()`
+from another thread to interrupt encoding (returns `Error::Cancelled`):
+
+```rust
+use zenravif::*;
+
+# fn demo(pixels: &[RGBA8], width: usize, height: usize) {
+let token = CancellationToken::new();
+let token_for_thread = token.clone();
+std::thread::spawn(move || {
+    // …decide to abort…
+    token_for_thread.cancel();
+});
+
+let _ = Encoder::new()
+    .with_cancellation_token(token)
+    .encode_rgba(Img::new(pixels, width, height));
+# }
+```
+
+### Higher bit depth, HDR, and animation
+
+- **Bit depth** — `with_bit_depth(BitDepth::Twelve)` (or `Ten`/`Eight`/`Auto`)
+  sets the internal AV1 precision; `Auto` (the default) uses 10-bit, which works
+  best even for 8-bit input.
+- **HDR metadata** — `with_mastering_display(...)` (SMPTE ST 2086),
+  `with_content_light(...)` (CEA-861.3), plus `with_color_primaries`,
+  `with_transfer_characteristics`, and `with_pixel_range`.
+- **Animation** — `encode_animation_rgb` / `encode_animation_rgba` for 8-bit
+  sequences, and `encode_animation_rgb16` / `encode_animation_rgba16` for 16-bit.
 
 ## License
 
