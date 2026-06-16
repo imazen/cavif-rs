@@ -690,7 +690,7 @@ impl<'exif_slice> Encoder<'exif_slice> {
     /// Enable/disable variance adaptive quantization (imazen/rav1e fork).
     ///
     /// VAQ allocates more bits to smooth regions where artifacts are visible
-    /// and fewer bits to textured regions. Default: enabled, strength 0.5.
+    /// and fewer bits to textured regions. Default: disabled; strength 1.0 when enabled.
     #[cfg(feature = "imazen")]
     #[inline(always)]
     #[must_use]
@@ -704,7 +704,7 @@ impl<'exif_slice> Encoder<'exif_slice> {
     ///
     /// Uses `Tune::StillImage` which applies perceptual distortion metric with
     /// activity masking plus reduced CDEF/deblock for detail preservation.
-    /// Default: enabled.
+    /// Default: disabled.
     #[cfg(feature = "imazen")]
     #[inline(always)]
     #[must_use]
