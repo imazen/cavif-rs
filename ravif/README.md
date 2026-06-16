@@ -22,8 +22,28 @@ Changes from upstream:
 
 ```toml
 [dependencies]
-zenravif = "0.1.3"
+zenravif = "0.2.0"
 ```
+
+### Error handling
+
+The encode API returns `At<Error>` — the `Error` enum wrapped by
+[`whereat`](https://lib.rs/crates/whereat) with a `file:line:col` trace (and a
+clickable GitHub link when built from a checkout of this repo). This makes
+server-side failures debuggable: you learn *where* an encode failed, not just
+*that* it did, with zero cost on the success path. The crate's `Result<T>`
+alias is `core::result::Result<T, At<Error>>`.
+
+- Match the underlying error by borrowing it with `.error()`:
+  `Err(e) if matches!(e.error(), Error::Cancelled)`.
+- Print the location trail with `.full_trace()`. The plain `Display` of
+  `At<Error>` shows only the error message, so code that just prints the error
+  keeps working, and `?`-conversion into `Box<dyn Error>` / `anyhow::Error`
+  works unchanged (`At<Error>` implements `std::error::Error`).
+
+Errors reported by the underlying rav1e encoder preserve rav1e's own reason
+string (e.g. `Encoding error reported by rav1e: invalid width 70000 (expected >= 16, <= 65535)`),
+rather than a fixed placeholder.
 
 ### Pixel types — where they come from
 
@@ -50,7 +70,7 @@ need to pad to RGBA:
 ```rust
 use zenravif::*;
 
-# fn demo(width: usize, height: usize) -> Result<(), Error> {
+# fn demo(width: usize, height: usize) -> Result<()> {
 // RGB8::new(r, g, b) — one entry per pixel, row-major, tightly packed.
 let pixels: Vec<RGB8> = vec![RGB8::new(255, 0, 0); width * height];
 let img = Img::new(pixels.as_slice(), width, height);
@@ -72,7 +92,7 @@ For images with transparency, use `encode_rgba` with `RGBA8` pixels:
 ```rust
 use zenravif::*;
 
-# fn demo(width: usize, height: usize) -> Result<(), Error> {
+# fn demo(width: usize, height: usize) -> Result<()> {
 let pixels: Vec<RGBA8> = vec![RGBA8::new(255, 0, 0, 255); width * height];
 let img = Img::new(pixels.as_slice(), width, height);
 
@@ -132,8 +152,9 @@ let result = Encoder::new()
 
 match result {
     Ok(encoded) => { /* use encoded.avif_file */ }
-    Err(Error::Cancelled) => { /* timed out */ }
-    Err(e) => { /* other error */ }
+    // `At<Error>`: borrow the inner error to match it.
+    Err(e) if matches!(e.error(), Error::Cancelled) => { /* timed out */ }
+    Err(e) => { /* other error — e.full_trace() shows where it failed */ }
 }
 # }
 ```
@@ -141,7 +162,8 @@ match result {
 ### Manual cancellation
 
 Construct a token with `CancellationToken::new()`, clone it, and call `.cancel()`
-from another thread to interrupt encoding (returns `Error::Cancelled`):
+from another thread to interrupt encoding (returns `Error::Cancelled`, wrapped in
+`At<Error>`):
 
 ```rust
 use zenravif::*;

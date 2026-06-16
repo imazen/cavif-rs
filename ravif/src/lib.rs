@@ -1,10 +1,26 @@
 //! Pure Rust AVIF image encoder based on rav1e.
 //!
+//! # Error handling
+//!
+//! The encode API returns [`At<Error>`] — the [`Error`] enum wrapped with a
+//! `file:line:col` trace (and a clickable GitHub link when built from a
+//! checkout of this repo). This helps server-side debugging: a failed encode
+//! tells you *where* it failed, not just *that* it failed. The crate's
+//! [`Result`] alias is `core::result::Result<T, At<Error>>`.
+//!
+//! - Match the underlying error by borrowing it with [`At::error`].
+//! - Print the location trail with [`At::full_trace`]; the plain `Display` of
+//!   `At<Error>` shows only the error message, so it stays drop-in compatible
+//!   with code that just prints the error.
+//!
+//! Errors from the underlying rav1e encoder preserve rav1e's own reason string
+//! (e.g. `invalid width 8 (expected >= 16, <= 65535)`).
+//!
 //! # Basic Usage
 //!
 //! ```rust
 //! use zenravif::*;
-//! # fn doit(pixels: &[RGBA8], width: usize, height: usize) -> Result<(), Error> {
+//! # fn doit(pixels: &[RGBA8], width: usize, height: usize) -> Result<()> {
 //! let res = Encoder::new()
 //!     .with_quality(70.)
 //!     .with_speed(4)
@@ -20,16 +36,17 @@
 //! ```rust
 //! use zenravif::*;
 //! use std::time::Duration;
-//! # fn example(pixels: &[RGBA8], width: usize, height: usize) -> Result<(), Error> {
+//! # fn example(pixels: &[RGBA8], width: usize, height: usize) -> Result<()> {
 //!
 //! let encoder = Encoder::new()
 //!     .with_quality(70.)
 //!     .with_timeout(Duration::from_millis(100));
 //!
 //! match encoder.encode_rgba(Img::new(pixels, width, height)) {
-//!     Err(Error::Cancelled) => {
-//!         println!("Encoding timed out");
-//!         Err(Error::Cancelled)
+//!     Err(e) if matches!(e.error(), Error::Cancelled) => {
+//!         // `e.full_trace()` shows where the timeout fired.
+//!         println!("Encoding timed out at {}", e.full_trace());
+//!         Err(e)
 //!     },
 //!     result => result.map(|_| ()),
 //! }
@@ -44,7 +61,7 @@
 //! use zenravif::*;
 //! use std::thread;
 //! use std::time::Duration;
-//! # fn example(pixels: &[RGBA8], width: usize, height: usize) -> Result<(), Error> {
+//! # fn example(pixels: &[RGBA8], width: usize, height: usize) -> Result<()> {
 //!
 //! let token = CancellationToken::new();
 //! let token_clone = token.clone();
@@ -60,9 +77,9 @@
 //!     .with_cancellation_token(token);
 //!
 //! match encoder.encode_rgba(Img::new(pixels, width, height)) {
-//!     Err(Error::Cancelled) => {
-//!         println!("Encoding cancelled");
-//!         Err(Error::Cancelled)
+//!     Err(e) if matches!(e.error(), Error::Cancelled) => {
+//!         println!("Encoding cancelled at {}", e.full_trace());
+//!         Err(e)
 //!     },
 //!     result => result.map(|_| ()),
 //! }
@@ -82,9 +99,23 @@ pub use cancel::CancellationToken;
 #[cfg(feature = "stop")]
 pub use almost_enough::StopToken;
 
+// Enables clickable GitHub links in `At<Error>` traces. The crate lives in
+// the `ravif/` subdirectory of the `imazen/cavif-rs` repo, so the path prefix
+// must point there for links to resolve to the right source files.
+whereat::define_at_crate_info!(path = "ravif/");
+
 mod error;
 pub use av1encoder::ColorModel;
-pub use error::Error;
+pub use error::{EncodingErrorDetail, Error};
+
+#[doc(no_inline)]
+pub use whereat::At;
+
+/// Result type for the encode API: the error is wrapped in [`At`] so it
+/// carries the originating `file:line:col` (and a GitHub link when built from
+/// a checkout of this repo). Pattern-match the underlying [`Error`] with
+/// [`At::error`], or print [`At::full_trace`] for the location trail.
+pub type Result<T> = core::result::Result<T, At<Error>>;
 
 #[doc(hidden)]
 #[deprecated = "Renamed to `ColorModel`"]
@@ -237,7 +268,7 @@ fn test_cancellation_token_precancelled() {
         .with_cancellation_token(token);
 
     let result = enc.encode_rgba(img.as_ref());
-    assert!(matches!(result, Err(Error::Cancelled)));
+    assert!(matches!(result.as_ref().map_err(At::error), Err(Error::Cancelled)));
 }
 
 #[test]
@@ -267,7 +298,7 @@ fn test_cancellation_token_during_encoding() {
     let result = enc.encode_rgba(img.as_ref());
     // Should be cancelled (though timing is not guaranteed)
     // If it completes before cancellation, that's also valid behavior
-    match result {
+    match result.as_ref().map_err(At::error) {
         Err(Error::Cancelled) => {
             // Expected case: cancellation worked
         }
@@ -313,7 +344,7 @@ fn test_timeout_expires() {
     let elapsed = start.elapsed();
 
     // This test is timing-dependent, so we accept either outcome:
-    match result {
+    match result.as_ref().map_err(At::error) {
         Err(Error::Cancelled) => {
             // Cancelled — the timeout mechanism works.
             // First packet in pure Rust mode can take 90+ seconds on CI,
@@ -377,7 +408,7 @@ fn test_timeout_and_cancellation_token_together() {
     let elapsed = start.elapsed();
 
     // Should be cancelled (either by token or timeout)
-    if let Err(Error::Cancelled) = result {
+    if let Err(Error::Cancelled) = result.as_ref().map_err(At::error) {
         // Token fires at ~20ms, but cancellation only happens at packet boundaries.
         // Pure Rust encoding of 256x256 at speed 6 can take 90+ seconds for the
         // first packet on slow CI runners, so we use a generous bound.

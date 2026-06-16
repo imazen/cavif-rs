@@ -3,6 +3,8 @@ use std::borrow::Cow;
 use crate::cancel::CancellationToken;
 use crate::dirtyalpha::blurred_dirty_alpha;
 use crate::error::Error;
+use crate::Result;
+use whereat::{at, ResultAtExt as _};
 #[cfg(not(feature = "threading"))]
 use crate::rayoff as rayon;
 use imgref::{Img, ImgVec};
@@ -15,7 +17,7 @@ use rgb::{RGB8, RGBA8};
 fn check_cancellation(
     cancel_token: Option<&CancellationToken>,
     deadline: Option<std::time::Instant>,
-) -> Result<(), Error> {
+) -> core::result::Result<(), Error> {
     if cancel_token.is_some_and(|t| t.is_cancelled()) {
         return Err(Error::Cancelled);
     }
@@ -554,8 +556,9 @@ impl<'exif_slice> Encoder<'exif_slice> {
     ///
     /// match encoder.encode_rgba(Img::new(pixels, width, height)) {
     ///     Ok(result) => println!("Encoded successfully"),
-    ///     Err(Error::Cancelled) => println!("Encoding timed out"),
-    ///     Err(e) => eprintln!("Error: {:?}", e),
+    ///     // The encode error is `At<Error>`; borrow the inner error to match it.
+    ///     Err(e) if matches!(e.error(), Error::Cancelled) => println!("Encoding timed out"),
+    ///     Err(e) => eprintln!("Error: {:?} at {}", e.error(), e.full_trace()),
     /// }
     /// # }
     /// ```
@@ -829,7 +832,10 @@ impl<'exif_slice> Encoder<'exif_slice> {
     /// let enc = Encoder::new().with_quality(150.0); // clamped at encode time
     /// assert!(enc.validate().is_err());
     /// ```
-    pub fn validate(&self) -> Result<(), crate::ValidationError> {
+    // `validate()` is a config-shape check, not an encode call, so it keeps
+    // returning the bare `ValidationError` (the crate's `Result` alias is the
+    // `At<Error>` encode result; spell out `core::result::Result` here).
+    pub fn validate(&self) -> core::result::Result<(), crate::ValidationError> {
         use crate::validate as v;
         use crate::ValidationError as E;
 
@@ -938,17 +944,19 @@ impl Encoder<'_> {
     /// means unlimited (the cap is disabled). Uses a saturating multiply
     /// so an overflowing `width * height` cannot wrap past the limit.
     #[inline]
-    pub(crate) fn check_pixel_limit(&self, width: usize, height: usize) -> Result<(), Error> {
+    pub(crate) fn check_pixel_limit(&self, width: usize, height: usize) -> Result<()> {
         if self.max_pixels == 0 {
             return Ok(());
         }
         let pixels = (width as u64).saturating_mul(height as u64);
         if pixels > self.max_pixels {
-            return Err(Error::TooManyPixels {
+            // Pre-flight rejection: trace the origin so server logs show the
+            // exact dimensions and the call site that rejected them.
+            return Err(at!(Error::TooManyPixels {
                 width,
                 height,
                 max_pixels: self.max_pixels,
-            });
+            }));
         }
         Ok(())
     }
@@ -973,15 +981,15 @@ impl Encoder<'_> {
     /// This function takes 8-bit inputs, but will generate an AVIF file using 10-bit depth.
     ///
     /// returns AVIF file with info about sizes about AV1 payload.
-    pub fn encode_rgba(&self, in_buffer: Img<&[rgb::RGBA<u8>]>) -> Result<EncodedImage, Error> {
+    pub fn encode_rgba(&self, in_buffer: Img<&[rgb::RGBA<u8>]>) -> Result<EncodedImage> {
         // Pre-flight: reject oversized dimensions before any pixel work
         // (convert_alpha_8bit below scans the whole buffer).
-        self.check_pixel_limit(in_buffer.width(), in_buffer.height())?;
+        self.check_pixel_limit(in_buffer.width(), in_buffer.height()).at()?;
         let new_alpha = self.convert_alpha_8bit(in_buffer);
         let buffer = new_alpha.as_ref().map(|b| b.as_ref()).unwrap_or(in_buffer);
         let use_alpha = buffer.pixels().any(|px| px.a != 255);
         if !use_alpha {
-            return self.encode_rgb_internal_from_8bit(buffer.width(), buffer.height(), buffer.pixels().map(|px| px.rgb()));
+            return self.encode_rgb_internal_from_8bit(buffer.width(), buffer.height(), buffer.pixels().map(|px| px.rgb())).at();
         }
 
         let width = buffer.width();
@@ -998,7 +1006,7 @@ impl Encoder<'_> {
                     ColorModel::RGB => rgb_to_8_bit_gbr(px.rgb()).into(),
                 });
                 let alpha = buffer.pixels().map(|px| px.a);
-                self.encode_raw_planes_8_bit(width, height, planes, Some(alpha), pixel_range, matrix_coefficients)
+                self.encode_raw_planes_8_bit(width, height, planes, Some(alpha), pixel_range, matrix_coefficients).at()
             },
             BitDepth::Ten | BitDepth::Auto => {
                 let planes = buffer.pixels().map(|px| match self.color_model {
@@ -1006,7 +1014,7 @@ impl Encoder<'_> {
                     ColorModel::RGB => rgb_to_10_bit_gbr(px.rgb()).into(),
                 });
                 let alpha = buffer.pixels().map(|px| to_ten(px.a));
-                self.encode_raw_planes_10_bit(width, height, planes, Some(alpha), pixel_range, matrix_coefficients)
+                self.encode_raw_planes_10_bit(width, height, planes, Some(alpha), pixel_range, matrix_coefficients).at()
             },
             BitDepth::Twelve => {
                 let planes = buffer.pixels().map(|px| match self.color_model {
@@ -1014,7 +1022,7 @@ impl Encoder<'_> {
                     ColorModel::RGB => rgb_to_12_bit_gbr(px.rgb()).into(),
                 });
                 let alpha = buffer.pixels().map(|px| to_twelve(px.a));
-                self.encode_raw_planes_12_bit(width, height, planes, Some(alpha), pixel_range, matrix_coefficients)
+                self.encode_raw_planes_12_bit(width, height, planes, Some(alpha), pixel_range, matrix_coefficients).at()
             },
         }
     }
@@ -1060,13 +1068,13 @@ impl Encoder<'_> {
     ///
     /// returns AVIF file, size of color metadata
     #[inline]
-    pub fn encode_rgb(&self, buffer: Img<&[RGB8]>) -> Result<EncodedImage, Error> {
+    pub fn encode_rgb(&self, buffer: Img<&[RGB8]>) -> Result<EncodedImage> {
         // Pre-flight: reject oversized dimensions before any pixel work.
-        self.check_pixel_limit(buffer.width(), buffer.height())?;
-        self.encode_rgb_internal_from_8bit(buffer.width(), buffer.height(), buffer.pixels())
+        self.check_pixel_limit(buffer.width(), buffer.height()).at()?;
+        self.encode_rgb_internal_from_8bit(buffer.width(), buffer.height(), buffer.pixels()).at()
     }
 
-    fn encode_rgb_internal_from_8bit(&self, width: usize, height: usize, pixels: impl Iterator<Item = RGB8> + Send + Sync) -> Result<EncodedImage, Error> {
+    fn encode_rgb_internal_from_8bit(&self, width: usize, height: usize, pixels: impl Iterator<Item = RGB8> + Send + Sync) -> Result<EncodedImage> {
         let matrix_coefficients = match self.color_model {
             ColorModel::YCbCr => MatrixCoefficients::BT601,
             ColorModel::RGB => MatrixCoefficients::Identity,
@@ -1126,8 +1134,8 @@ impl Encoder<'_> {
         planes: impl IntoIterator<Item = [u8; 3]> + Send,
         alpha: Option<impl IntoIterator<Item = u8> + Send>,
         color_pixel_range: PixelRange, matrix_coefficients: MatrixCoefficients,
-    ) -> Result<EncodedImage, Error> {
-        self.encode_raw_planes_internal(width, height, planes, alpha, color_pixel_range, matrix_coefficients, 8)
+    ) -> Result<EncodedImage> {
+        self.encode_raw_planes_internal(width, height, planes, alpha, color_pixel_range, matrix_coefficients, 8).at()
     }
 
     /// Encodes AVIF from 3 planar channels that are in the color space described by `matrix_coefficients`,
@@ -1150,8 +1158,8 @@ impl Encoder<'_> {
         planes: impl IntoIterator<Item = [u16; 3]> + Send,
         alpha: Option<impl IntoIterator<Item = u16> + Send>,
         color_pixel_range: PixelRange, matrix_coefficients: MatrixCoefficients,
-    ) -> Result<EncodedImage, Error> {
-        self.encode_raw_planes_internal(width, height, planes, alpha, color_pixel_range, matrix_coefficients, 10)
+    ) -> Result<EncodedImage> {
+        self.encode_raw_planes_internal(width, height, planes, alpha, color_pixel_range, matrix_coefficients, 10).at()
     }
 
     /// Encodes AVIF from 3 planar channels that are in the color space described by `matrix_coefficients`.
@@ -1168,8 +1176,8 @@ impl Encoder<'_> {
         planes: impl IntoIterator<Item = [u16; 3]> + Send,
         alpha: Option<impl IntoIterator<Item = u16> + Send>,
         color_pixel_range: PixelRange, matrix_coefficients: MatrixCoefficients,
-    ) -> Result<EncodedImage, Error> {
-        self.encode_raw_planes_internal(width, height, planes, alpha, color_pixel_range, matrix_coefficients, 12)
+    ) -> Result<EncodedImage> {
+        self.encode_raw_planes_internal(width, height, planes, alpha, color_pixel_range, matrix_coefficients, 12).at()
     }
 
     #[inline(never)]
@@ -1180,14 +1188,14 @@ impl Encoder<'_> {
         alpha: Option<impl IntoIterator<Item = P> + Send>,
         color_pixel_range: PixelRange, matrix_coefficients: MatrixCoefficients,
         input_pixels_bit_depth: u8,
-    ) -> Result<EncodedImage, Error> {
+    ) -> Result<EncodedImage> {
         // Pre-flight: the single shared chokepoint for every still encode
         // path (encode_rgba / encode_rgb / encode_raw_planes_{8,10,12}_bit).
         // Rejecting oversized dimensions here — before the rav1e context is
         // built — guarantees no public entry point can bypass the cap.
-        self.check_pixel_limit(width, height)?;
+        self.check_pixel_limit(width, height).at()?;
         if self.chroma_subsampling == ChromaSubsampling::Yuv420 && matrix_coefficients == MatrixCoefficients::Identity {
-            return Err(Error::Unsupported("4:2:0 chroma subsampling with RGB color model"));
+            return Err(at!(Error::Unsupported("4:2:0 chroma subsampling with RGB color model")));
         }
 
         let color_description = Some(ColorDescription {
@@ -1349,7 +1357,7 @@ impl Encoder<'_> {
         let (color, alpha) = (encode_color(), encode_alpha());
         #[cfg(not(all(target_arch = "wasm32", not(target_feature = "atomics"))))]
         let (color, alpha) = rayon::join(encode_color, encode_alpha);
-        let (color, alpha) = (color?, alpha.transpose()?);
+        let (color, alpha) = (color.at()?, alpha.transpose().at()?);
 
         let mut serializer_config = zenavif_serialize::Aviffy::new();
         serializer_config
@@ -1361,7 +1369,7 @@ impl Encoder<'_> {
                 MatrixCoefficients::YCgCo => zenavif_serialize::constants::MatrixCoefficients::Ycgco,
                 MatrixCoefficients::BT2020NCL => zenavif_serialize::constants::MatrixCoefficients::Bt2020Ncl,
                 MatrixCoefficients::BT2020CL => zenavif_serialize::constants::MatrixCoefficients::Bt2020Cl,
-                _ => return Err(Error::Unsupported("matrix coefficients")),
+                _ => return Err(at!(Error::Unsupported("matrix coefficients"))),
             })
             .premultiplied_alpha(self.premultiplied_alpha);
 
@@ -1834,7 +1842,7 @@ fn init_frame_3<P: zenrav1e::Pixel + Default>(
     frame: &mut Frame<P>,
     cancel_token: Option<&CancellationToken>,
     deadline: Option<std::time::Instant>,
-) -> Result<(), Error> {
+) -> core::result::Result<(), Error> {
     let mut f = frame.planes.iter_mut();
     let mut planes = planes.into_iter();
 
@@ -1874,7 +1882,7 @@ fn init_frame_3_420<P: zenrav1e::Pixel + Default>(
     frame: &mut Frame<P>,
     cancel_token: Option<&CancellationToken>,
     deadline: Option<std::time::Instant>,
-) -> Result<(), Error> {
+) -> core::result::Result<(), Error> {
     let chroma_width = width.div_ceil(2);
     let chroma_height = height.div_ceil(2);
 
@@ -1958,7 +1966,7 @@ fn init_frame_1<P: zenrav1e::Pixel + Default>(
     frame: &mut Frame<P>,
     cancel_token: Option<&CancellationToken>,
     deadline: Option<std::time::Instant>,
-) -> Result<(), Error> {
+) -> core::result::Result<(), Error> {
     let mut y = frame.planes[0].mut_slice(Default::default());
     let mut planes = planes.into_iter();
 
@@ -1984,17 +1992,24 @@ fn encode_to_av1<P: zenrav1e::Pixel>(
     p: &Av1EncodeConfig,
     cancel_token: Option<&CancellationToken>,
     deadline: Option<std::time::Instant>,
-    init: impl FnOnce(&mut Frame<P>) -> Result<(), Error>,
-) -> Result<Vec<u8>, Error> {
+    // `init` runs the per-pixel fill loop, so it stays bare `Error` (no `At`)
+    // and we attach the trace once, at the single call site below.
+    init: impl FnOnce(&mut Frame<P>) -> core::result::Result<(), Error>,
+) -> Result<Vec<u8>> {
     // Check cancellation/timeout before starting
     if cancel_token.is_some_and(|t| t.is_cancelled()) {
-        return Err(Error::Cancelled);
+        return Err(at!(Error::Cancelled));
     }
     if deadline.is_some_and(|d| std::time::Instant::now() >= d) {
-        return Err(Error::Cancelled);
+        return Err(at!(Error::Cancelled));
     }
 
-    let mut ctx: Context<P> = rav1e_config(p).new_context()?;
+    // Consume zenrav1e's bare `InvalidConfig` and trace it here. `Error::from`
+    // preserves the rav1e reason string (see error.rs).
+    // TODO(whereat): when this crate bumps to zenrav1e ^0.2.0 (which returns
+    // `At<InvalidConfig>`), switch this to `.map_err_at(Error::from)?` to carry
+    // zenrav1e's own trace instead of starting a fresh one here.
+    let mut ctx: Context<P> = rav1e_config(p).new_context().map_err(|e| at!(Error::from(e)))?;
 
     // Wire per-superblock cooperative cancellation via zenrav1e's stop feature.
     // This enables cancellation DURING encoding, not just between packets.
@@ -2010,22 +2025,31 @@ fn encode_to_av1<P: zenrav1e::Pixel>(
 
     let mut frame = ctx.new_frame();
 
-    init(&mut frame)?;
-    ctx.send_frame(frame)?;
+    // `init` ran the per-pixel fill loop with bare errors; trace it here, at the
+    // boundary, rather than inside the loop.
+    init(&mut frame).map_err(|e| at!(e))?;
+    // `send_frame` returns a bare `EncoderStatus`; convert it (preserving the
+    // rav1e reason) and trace it at this boundary.
+    ctx.send_frame(frame).map_err(|e| at!(Error::from(e)))?;
     ctx.flush();
 
     let mut out = Vec::new();
 
     loop {
         // Check cancellation on every iteration (fast: ~5-15ns for token, ~20-50ns for timeout)
-        // This ensures responsive cancellation even if receive_packet() is slow
+        // This ensures responsive cancellation even if receive_packet() is slow.
+        // These are genuine cancellation EXITS (not bare receive_packet status
+        // matching), so they trace via `at!`.
         if cancel_token.is_some_and(|t| t.is_cancelled()) {
-            return Err(Error::Cancelled);
+            return Err(at!(Error::Cancelled));
         }
         if deadline.is_some_and(|d| std::time::Instant::now() >= d) {
-            return Err(Error::Cancelled);
+            return Err(at!(Error::Cancelled));
         }
 
+        // Hot loop: bare `EncoderStatus` matching for the non-error control-flow
+        // statuses (Encoded/LimitReached → break) stays untraced by design.
+        // Only the genuine-error exits below trace via `at!`.
         match ctx.receive_packet() {
             Ok(mut packet) => match packet.frame_type {
                 FrameType::KEY => {
@@ -2035,8 +2059,8 @@ fn encode_to_av1<P: zenrav1e::Pixel>(
             },
             Err(EncoderStatus::Encoded | EncoderStatus::LimitReached) => break,
             #[cfg(feature = "stop")]
-            Err(EncoderStatus::Cancelled) => return Err(Error::Cancelled),
-            Err(err) => Err(err)?,
+            Err(EncoderStatus::Cancelled) => return Err(at!(Error::Cancelled)),
+            Err(err) => return Err(at!(Error::from(err))),
         }
     }
     Ok(out)

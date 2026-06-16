@@ -2,16 +2,58 @@
 
 ## [Unreleased]
 
-### Added
-- `Encoder::with_max_pixels(u64)` builder and `DEFAULT_MAX_PIXELS` const (120
-  megapixels). The encode functions now reject any request whose
-  `width * height` exceeds the cap **pre-flight** — before allocating planes or
-  building the rav1e context — returning the new `Error::TooManyPixels { width,
-  height, max_pixels }` variant. `Error` is `#[non_exhaustive]`, so the added
-  variant is non-breaking. Pass `with_max_pixels(0)` to disable the cap
-  (unlimited) for already-trusted dimensions.
+## [0.2.0] - 2026-06-16
+
+### Changed (BREAKING)
+- The public encode API now returns `At<Error>` instead of `Error`. Every encode
+  method — `encode_rgba` / `encode_rgb` / `encode_raw_planes_{8,10,12}_bit` /
+  `encode_animation_{rgb,rgba,rgb16,rgba16}` — returns
+  `core::result::Result<_, At<Error>>` (re-exported as the crate's `Result<T>`
+  alias). The wrapped [`whereat`](https://lib.rs/crates/whereat) `At<Error>`
+  carries the originating `file:line:col` (and a clickable GitHub link when
+  built from a checkout of this repo) for server-side debuggability, at zero
+  cost on the success path. **Migration:** match the underlying error by
+  borrowing it — `Err(e) if matches!(e.error(), Error::Cancelled)` instead of
+  `Err(Error::Cancelled)` — and print the location trail with `e.full_trace()`.
+  The plain `Display` of `At<Error>` shows only the error message, so code that
+  just prints the error keeps working. `At<Error>` implements
+  `std::error::Error` (delegating `source()` to `Error`), so `?`-conversion into
+  `Box<dyn Error>` / `anyhow::Error` continues to work. `Error` itself, its
+  variants, and `ValidationError` are unchanged; `Encoder::validate()` still
+  returns `Result<(), ValidationError>`.
 
 ### Fixed
+- Errors reported by the underlying rav1e encoder now **preserve rav1e's own
+  reason string** (config-validation message, encoder-status reason) instead of
+  the fixed `"Encoding error reported by rav1e"` placeholder. The `From`
+  conversions for `zenrav1e::InvalidConfig` / `zenrav1e::EncoderStatus` capture
+  the error's `Display` into `EncodingErrorDetail` (now a struct with a public
+  `reason()` accessor), so a failed encode reports *what* failed — e.g.
+  `Encoding error reported by rav1e: invalid width 70000 (expected >= 16, <= 65535)`.
+  This addresses the audit's debuggability finding (the reason was discarded).
+
+### Added
+- `whereat` dependency for traced errors; `pub use whereat::At` and a crate-level
+  `Result<T>` alias.
+
+### Note (future zenrav1e 0.2.0 bump)
+- zenravif currently consumes **published zenrav1e 0.1.4**, whose config/status
+  errors are *bare* (`InvalidConfig` / `EncoderStatus`, no `At`). The context
+  construction sites therefore start a fresh trace via `at!(Error::from(e))`.
+  When zenravif bumps to `zenrav1e ^0.2.0` (which returns `At<InvalidConfig>`),
+  switch those sites to `.map_err_at(Error::from)?` to carry zenrav1e's own
+  trace through. The consumption sites are marked with a
+  `// TODO(whereat): map_err_at once on zenrav1e 0.2.0` comment.
+
+### Added (carried from the unreleased 0.1.x work, now shipping in 0.2.0)
+- `Encoder::with_max_pixels(u64)` builder and `DEFAULT_MAX_PIXELS` const (120
+  megapixels). The encode functions reject any request whose `width * height`
+  exceeds the cap **pre-flight** — before allocating planes or building the
+  rav1e context — returning the `Error::TooManyPixels { width, height,
+  max_pixels }` variant (now traced via `at!`). Pass `with_max_pixels(0)` to
+  disable the cap (unlimited) for already-trusted dimensions.
+
+### Fixed (carried from the unreleased 0.1.x work)
 - Encode paths no longer fail open on attacker-controlled dimensions. The three
   call sites that forced zenrav1e's `max_pixel_count` guard to `u64::MAX` (in
   `av1encoder.rs` and `animated.rs`) now forward the configured `max_pixels`
@@ -19,7 +61,7 @@
   pre-flight dimension check runs at every still/animation encode entry point.
   Previously a server passing unbounded `w x h` got no pre-flight rejection.
 
-### Changed
+### Changed (carried from the unreleased 0.1.x work)
 - Add `CHANGELOG.md` to published package `include` list so crate consumers see release history
 
 ## [0.1.3] - 2026-05-02
