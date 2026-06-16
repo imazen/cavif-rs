@@ -54,8 +54,10 @@ fn main() {
     let start = Instant::now();
     match encoder.encode_rgba(img) {
         Ok(_) => println!("   ✗ Unexpectedly succeeded"),
-        Err(Error::Cancelled) => {
+        Err(e) if matches!(e.error(), Error::Cancelled) => {
+            // `At<Error>` carries the file:line where cancellation fired.
             println!("   ✓ Encoding cancelled as expected in {:?}", start.elapsed());
+            println!("     trace: {}", e.full_trace());
         }
         Err(e) => println!("   ✗ Unexpected error: {:?}", e),
     }
@@ -85,7 +87,7 @@ fn main() {
                 start.elapsed()
             );
         }
-        Err(Error::Cancelled) => {
+        Err(e) if matches!(e.error(), Error::Cancelled) => {
             println!("   ✓ Encoding cancelled after {:?}", start.elapsed());
         }
         Err(e) => println!("   ✗ Unexpected error: {:?}", e),
@@ -157,7 +159,7 @@ fn main() {
                     result.avif_file.len()
                 );
             }
-            Err(Error::Cancelled) => {
+            Err(e) if matches!(e.error(), Error::Cancelled) => {
                 println!("   ⚠ {} cancelled after {:?}", name, start.elapsed());
             }
             Err(e) => println!("   ✗ {} error: {:?}", name, e),
@@ -209,7 +211,7 @@ fn main() {
                     result.avif_file.len()
                 );
             }
-            Err(Error::Cancelled) => {
+            Err(e) if matches!(e.error(), Error::Cancelled) => {
                 println!("   ⚠ {} timed out after {:?}", name, start.elapsed());
             }
             Err(e) => println!("   ✗ {} error: {:?}", name, e),

@@ -5,6 +5,8 @@
 
 use crate::av1encoder::SpeedTweaks;
 use crate::error::Error;
+use crate::Result;
+use whereat::{at, ResultAtExt as _};
 use zenrav1e::prelude::*;
 use zenavif_serialize::animated::{AnimFrame as SerializeFrame, AnimatedImage};
 use zenavif_serialize::Av1CBox;
@@ -66,9 +68,9 @@ impl crate::Encoder<'_> {
     ///
     /// Each frame has its own duration in milliseconds. All frames must have
     /// the same dimensions.
-    pub fn encode_animation_rgb(&self, frames: &[AnimFrame<'_>]) -> Result<EncodedAnimation, Error> {
+    pub fn encode_animation_rgb(&self, frames: &[AnimFrame<'_>]) -> Result<EncodedAnimation> {
         if frames.is_empty() {
-            return Err(Error::Unsupported("empty frame sequence"));
+            return Err(at!(Error::Unsupported("empty frame sequence")));
         }
 
         let width = frames[0].rgb.width();
@@ -76,10 +78,10 @@ impl crate::Encoder<'_> {
 
         for f in frames {
             if f.rgb.width() != width || f.rgb.height() != height {
-                return Err(Error::Unsupported("all frames must have the same dimensions"));
+                return Err(at!(Error::Unsupported("all frames must have the same dimensions")));
             }
             if f.duration_ms == 0 {
-                return Err(Error::Unsupported("frame duration must be > 0"));
+                return Err(at!(Error::Unsupported("frame duration must be > 0")));
             }
         }
 
@@ -95,17 +97,17 @@ impl crate::Encoder<'_> {
             },
             false,
             8,
-        )?;
+        ).at()?;
 
-        assemble_animation(self, width, height, &encoded_frames, &durations_ms, None, 8)
+        assemble_animation(self, width, height, &encoded_frames, &durations_ms, None, 8).at()
     }
 
     /// Encode a sequence of 8-bit RGBA frames into an animated AVIF.
     ///
     /// If any frame has non-opaque alpha, an alpha track is included.
-    pub fn encode_animation_rgba(&self, frames: &[AnimFrameRgba<'_>]) -> Result<EncodedAnimation, Error> {
+    pub fn encode_animation_rgba(&self, frames: &[AnimFrameRgba<'_>]) -> Result<EncodedAnimation> {
         if frames.is_empty() {
-            return Err(Error::Unsupported("empty frame sequence"));
+            return Err(at!(Error::Unsupported("empty frame sequence")));
         }
 
         let width = frames[0].rgba.width();
@@ -113,10 +115,10 @@ impl crate::Encoder<'_> {
 
         for f in frames {
             if f.rgba.width() != width || f.rgba.height() != height {
-                return Err(Error::Unsupported("all frames must have the same dimensions"));
+                return Err(at!(Error::Unsupported("all frames must have the same dimensions")));
             }
             if f.duration_ms == 0 {
-                return Err(Error::Unsupported("frame duration must be > 0"));
+                return Err(at!(Error::Unsupported("frame duration must be > 0")));
             }
         }
 
@@ -134,7 +136,7 @@ impl crate::Encoder<'_> {
             },
             false,
             8,
-        )?;
+        ).at()?;
 
         // Encode alpha track if needed
         let alpha_frames = if has_alpha {
@@ -148,21 +150,21 @@ impl crate::Encoder<'_> {
                 },
                 true,
                 8,
-            )?)
+            ).at()?)
         } else {
             None
         };
 
-        assemble_animation(self, width, height, &color_frames, &durations_ms, alpha_frames.as_deref(), 8)
+        assemble_animation(self, width, height, &color_frames, &durations_ms, alpha_frames.as_deref(), 8).at()
     }
 
     /// Encode a sequence of 16-bit RGB frames into an animated AVIF (10-bit AV1).
     ///
     /// Input values should be in 10-bit range (0–1023). All frames must have
     /// the same dimensions.
-    pub fn encode_animation_rgb16(&self, frames: &[AnimFrame16<'_>]) -> Result<EncodedAnimation, Error> {
+    pub fn encode_animation_rgb16(&self, frames: &[AnimFrame16<'_>]) -> Result<EncodedAnimation> {
         if frames.is_empty() {
-            return Err(Error::Unsupported("empty frame sequence"));
+            return Err(at!(Error::Unsupported("empty frame sequence")));
         }
 
         let width = frames[0].rgb.width();
@@ -170,10 +172,10 @@ impl crate::Encoder<'_> {
 
         for f in frames {
             if f.rgb.width() != width || f.rgb.height() != height {
-                return Err(Error::Unsupported("all frames must have the same dimensions"));
+                return Err(at!(Error::Unsupported("all frames must have the same dimensions")));
             }
             if f.duration_ms == 0 {
-                return Err(Error::Unsupported("frame duration must be > 0"));
+                return Err(at!(Error::Unsupported("frame duration must be > 0")));
             }
         }
 
@@ -189,18 +191,18 @@ impl crate::Encoder<'_> {
             },
             false,
             10,
-        )?;
+        ).at()?;
 
-        assemble_animation(self, width, height, &encoded_frames, &durations_ms, None, 10)
+        assemble_animation(self, width, height, &encoded_frames, &durations_ms, None, 10).at()
     }
 
     /// Encode a sequence of 16-bit RGBA frames into an animated AVIF (10-bit AV1).
     ///
     /// Input values should be in 10-bit range (0–1023). If any frame has
     /// non-opaque alpha, an alpha track is included.
-    pub fn encode_animation_rgba16(&self, frames: &[AnimFrameRgba16<'_>]) -> Result<EncodedAnimation, Error> {
+    pub fn encode_animation_rgba16(&self, frames: &[AnimFrameRgba16<'_>]) -> Result<EncodedAnimation> {
         if frames.is_empty() {
-            return Err(Error::Unsupported("empty frame sequence"));
+            return Err(at!(Error::Unsupported("empty frame sequence")));
         }
 
         let width = frames[0].rgba.width();
@@ -208,10 +210,10 @@ impl crate::Encoder<'_> {
 
         for f in frames {
             if f.rgba.width() != width || f.rgba.height() != height {
-                return Err(Error::Unsupported("all frames must have the same dimensions"));
+                return Err(at!(Error::Unsupported("all frames must have the same dimensions")));
             }
             if f.duration_ms == 0 {
-                return Err(Error::Unsupported("frame duration must be > 0"));
+                return Err(at!(Error::Unsupported("frame duration must be > 0")));
             }
         }
 
@@ -229,7 +231,7 @@ impl crate::Encoder<'_> {
             },
             false,
             10,
-        )?;
+        ).at()?;
 
         // Encode alpha track if needed
         let alpha_frames = if has_alpha {
@@ -243,12 +245,12 @@ impl crate::Encoder<'_> {
                 },
                 true,
                 10,
-            )?)
+            ).at()?)
         } else {
             None
         };
 
-        assemble_animation(self, width, height, &color_frames, &durations_ms, alpha_frames.as_deref(), 10)
+        assemble_animation(self, width, height, &color_frames, &durations_ms, alpha_frames.as_deref(), 10).at()
     }
 }
 
@@ -259,13 +261,14 @@ fn encode_sequence_av1<P: Pixel + Default>(
     width: usize,
     height: usize,
     num_frames: usize,
-    init_frame: impl Fn(usize, &mut Frame<P>) -> Result<(), Error>,
+    // The fill closure runs the per-pixel loop, so it stays bare `Error`.
+    init_frame: impl Fn(usize, &mut Frame<P>) -> core::result::Result<(), Error>,
     is_alpha: bool,
     bit_depth: u8,
-) -> Result<Vec<Vec<u8>>, Error> {
+) -> Result<Vec<Vec<u8>>> {
     // Pre-flight: reject oversized frames before building the rav1e context.
     // This is the shared chokepoint for every animation encode entry point.
-    enc.check_pixel_limit(width, height)?;
+    enc.check_pixel_limit(width, height).at()?;
 
     let (quantizer, chroma_sampling) = if is_alpha {
         (enc.alpha_quantizer, ChromaSampling::Cs400)
@@ -331,18 +334,29 @@ fn encode_sequence_av1<P: Pixel + Default>(
     };
 
     let cfg = Config::new().with_encoder_config(config);
-    let mut ctx: Context<P> = cfg.new_context()?;
+    // Consume zenrav1e's bare `InvalidConfig` and trace it here (pre-loop
+    // boundary). `Error::from` preserves the rav1e reason string.
+    // TODO(whereat): when this crate bumps to zenrav1e ^0.2.0 (which returns
+    // `At<InvalidConfig>`), switch this to `.map_err_at(Error::from)?` to carry
+    // zenrav1e's own trace instead of starting a fresh one here.
+    let mut ctx: Context<P> = cfg.new_context().map_err(|e| at!(Error::from(e)))?;
 
+    // Per-frame send loop: propagate without tracing per-iteration. Plain `?`
+    // uses the location-free `From<Error>`/`From<EncoderStatus>` wrap, so no
+    // `at!`/`.at()` runs inside the loop. `Error::from(EncoderStatus)` still
+    // preserves the rav1e reason. The trace is attached at the public boundary.
     for i in 0..num_frames {
         let mut frame = ctx.new_frame();
         init_frame(i, &mut frame)?;
-        ctx.send_frame(frame)?;
+        ctx.send_frame(frame).map_err(Error::from)?;
     }
     ctx.flush();
 
     let mut packets: Vec<Option<Vec<u8>>> = (0..num_frames).map(|_| None).collect();
 
     loop {
+        // Hot loop: bare `EncoderStatus` control-flow arms stay untraced; only
+        // the genuine-error exit traces via `at!`.
         match ctx.receive_packet() {
             Ok(packet) => {
                 let idx = packet.input_frameno as usize;
@@ -353,13 +367,13 @@ fn encode_sequence_av1<P: Pixel + Default>(
             Err(EncoderStatus::Encoded) => continue,
             Err(EncoderStatus::NeedMoreData) => continue,
             Err(EncoderStatus::LimitReached) => break,
-            Err(err) => return Err(err.into()),
+            Err(err) => return Err(at!(Error::from(err))),
         }
     }
 
     let mut result = Vec::with_capacity(num_frames);
     for p in packets {
-        result.push(p.ok_or(Error::Unsupported("frame was not encoded"))?);
+        result.push(p.ok_or(Error::Unsupported("frame was not encoded")).map_err(|e| at!(e))?);
     }
     Ok(result)
 }
@@ -370,9 +384,9 @@ fn make_sequence_header<P: Pixel + Default>(
     height: usize,
     is_alpha: bool,
     bit_depth: u8,
-) -> Result<Vec<u8>, Error> {
+) -> Result<Vec<u8>> {
     // Pre-flight: guard the standalone context built here too.
-    enc.check_pixel_limit(width, height)?;
+    enc.check_pixel_limit(width, height).at()?;
 
     let (quantizer, chroma_sampling) = if is_alpha {
         (enc.alpha_quantizer, ChromaSampling::Cs400)
@@ -430,7 +444,10 @@ fn make_sequence_header<P: Pixel + Default>(
         speed_settings: speed.speed_settings(),
     };
     let cfg = Config::new().with_encoder_config(config);
-    let ctx: Context<P> = cfg.new_context()?;
+    // TODO(whereat): when this crate bumps to zenrav1e ^0.2.0 (which returns
+    // `At<InvalidConfig>`), switch this to `.map_err_at(Error::from)?` to carry
+    // zenrav1e's own trace instead of starting a fresh one here.
+    let ctx: Context<P> = cfg.new_context().map_err(|e| at!(Error::from(e)))?;
     Ok(ctx.container_sequence_header())
 }
 
@@ -443,24 +460,24 @@ fn assemble_animation(
     durations_ms: &[u32],
     alpha_frames: Option<&[Vec<u8>]>,
     bit_depth: u8,
-) -> Result<EncodedAnimation, Error> {
+) -> Result<EncodedAnimation> {
     let total_duration_ms: u64 = durations_ms.iter().map(|d| u64::from(*d)).sum();
     let frame_count = color_frames.len();
 
     let (color_seq_header, alpha_seq_header) = match bit_depth {
         10 | 12 => {
-            let color = make_sequence_header::<u16>(enc, width, height, false, bit_depth)?;
+            let color = make_sequence_header::<u16>(enc, width, height, false, bit_depth).at()?;
             let alpha = if alpha_frames.is_some() {
-                Some(make_sequence_header::<u16>(enc, width, height, true, bit_depth)?)
+                Some(make_sequence_header::<u16>(enc, width, height, true, bit_depth).at()?)
             } else {
                 None
             };
             (color, alpha)
         }
         _ => {
-            let color = make_sequence_header::<u8>(enc, width, height, false, bit_depth)?;
+            let color = make_sequence_header::<u8>(enc, width, height, false, bit_depth).at()?;
             let alpha = if alpha_frames.is_some() {
-                Some(make_sequence_header::<u8>(enc, width, height, true, bit_depth)?)
+                Some(make_sequence_header::<u8>(enc, width, height, true, bit_depth).at()?)
             } else {
                 None
             };
@@ -498,7 +515,7 @@ fn fill_frame_rgb8_420(
     width: usize,
     height: usize,
     img: ImgRef<'_, RGB8>,
-) -> Result<(), Error> {
+) -> core::result::Result<(), Error> {
     let chroma_width = width.div_ceil(2);
     let chroma_height = height.div_ceil(2);
 
@@ -559,7 +576,7 @@ fn fill_frame_rgba8_color_420(
     width: usize,
     height: usize,
     img: ImgRef<'_, RGBA8>,
-) -> Result<(), Error> {
+) -> core::result::Result<(), Error> {
     let chroma_width = width.div_ceil(2);
     let chroma_height = height.div_ceil(2);
 
@@ -620,7 +637,7 @@ fn fill_frame_alpha8(
     width: usize,
     height: usize,
     img: ImgRef<'_, RGBA8>,
-) -> Result<(), Error> {
+) -> core::result::Result<(), Error> {
     let mut y_plane = frame.planes[0].mut_slice(Default::default());
     for (row_idx, y_row) in y_plane.rows_iter_mut().take(height).enumerate() {
         let y_row = &mut y_row[..width];
@@ -639,7 +656,7 @@ fn fill_frame_rgb16_420(
     width: usize,
     height: usize,
     img: ImgRef<'_, rgb::RGB<u16>>,
-) -> Result<(), Error> {
+) -> core::result::Result<(), Error> {
     let chroma_width = width.div_ceil(2);
     let chroma_height = height.div_ceil(2);
 
@@ -704,7 +721,7 @@ fn fill_frame_rgba16_color_420(
     width: usize,
     height: usize,
     img: ImgRef<'_, rgb::RGBA<u16>>,
-) -> Result<(), Error> {
+) -> core::result::Result<(), Error> {
     let chroma_width = width.div_ceil(2);
     let chroma_height = height.div_ceil(2);
 
@@ -769,7 +786,7 @@ fn fill_frame_alpha16(
     width: usize,
     height: usize,
     img: ImgRef<'_, rgb::RGBA<u16>>,
-) -> Result<(), Error> {
+) -> core::result::Result<(), Error> {
     let mut y_plane = frame.planes[0].mut_slice(Default::default());
     for (row_idx, y_row) in y_plane.rows_iter_mut().take(height).enumerate() {
         let y_row = &mut y_row[..width];

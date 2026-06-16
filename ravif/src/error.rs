@@ -1,8 +1,41 @@
 use quick_error::quick_error;
+use std::fmt;
 
-#[derive(Debug)]
+/// The reason a rav1e encode failed, captured from the underlying
+/// [`zenrav1e`] error's [`Display`] output.
+///
+/// Previously this was a unit struct that discarded rav1e's reason; it now
+/// carries the original message so error reports say *what* failed (e.g.
+/// `invalid width 8 (expected >= 16, <= 65535)`) instead of a fixed string.
+///
+/// [`Display`]: std::fmt::Display
+#[derive(Debug, Clone, PartialEq, Eq)]
 #[doc(hidden)]
-pub struct EncodingErrorDetail; // maybe later
+pub struct EncodingErrorDetail {
+    /// The rav1e error reason, taken verbatim from its `Display` impl.
+    reason: String,
+}
+
+impl EncodingErrorDetail {
+    /// Capture the reason from any rav1e error that implements [`Display`].
+    ///
+    /// [`Display`]: std::fmt::Display
+    fn from_reason(reason: impl fmt::Display) -> Self {
+        Self { reason: reason.to_string() }
+    }
+
+    /// The preserved rav1e error reason.
+    #[must_use]
+    pub fn reason(&self) -> &str {
+        &self.reason
+    }
+}
+
+impl fmt::Display for EncodingErrorDetail {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str(&self.reason)
+    }
+}
 
 quick_error! {
     /// Failures enum
@@ -29,10 +62,15 @@ quick_error! {
         Cancelled {
             display("Encoding was cancelled")
         }
+        /// An error reported by the underlying rav1e encoder.
+        ///
+        /// The contained [`EncodingErrorDetail`] preserves rav1e's own reason
+        /// string (config validation message, encoder-status reason, etc.) so
+        /// the message reflects *what* failed rather than a fixed placeholder.
         EncodingError(e: EncodingErrorDetail) {
-            display("Encoding error reported by rav1e")
-            from(_e: zenrav1e::InvalidConfig) -> (EncodingErrorDetail)
-            from(_e: zenrav1e::EncoderStatus) -> (EncodingErrorDetail)
+            display("Encoding error reported by rav1e: {}", e)
+            from(e: zenrav1e::InvalidConfig) -> (EncodingErrorDetail::from_reason(e))
+            from(e: zenrav1e::EncoderStatus) -> (EncodingErrorDetail::from_reason(e))
         }
     }
 }

@@ -227,7 +227,12 @@ fn run() -> Result<(), BoxError> {
         } else {
             enc.with_quality(quality)
         };
-        let EncodedImage { avif_file, color_byte_size, alpha_byte_size , .. } = enc.encode_rgba(img.as_ref())?;
+        // zenravif 0.2 returns `At<Error>` (a traced error). Surface the
+        // `file:line` trace in the CLI's error output so server-side failures
+        // are debuggable, then box it for the rest of the pipeline.
+        let EncodedImage { avif_file, color_byte_size, alpha_byte_size , .. } = enc
+            .encode_rgba(img.as_ref())
+            .map_err(|e| -> BoxError { format!("{}", e.full_trace()).into() })?;
         match out_path {
             MaybePath::Path(ref p) => {
                 if !quiet {

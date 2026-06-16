@@ -25,7 +25,7 @@
 //! it (verified separately by grep, since the field is forwarded, not asserted
 //! here).
 
-use zenravif::{Encoder, Error, MatrixCoefficients, PixelRange};
+use zenravif::{At, Encoder, Error, MatrixCoefficients, PixelRange};
 
 /// `12000 * 12000 = 144_000_000` pixels — above the 120 MP default cap.
 const OVERSIZED_W: usize = 12_000;
@@ -49,15 +49,16 @@ fn oversized_dimensions_rejected_preflight_by_default() {
         PixelRange::Full,
         MatrixCoefficients::BT601,
     );
-    match result {
+    // Map Ok to `()` so the panic arm can Debug-print (EncodedImage isn't Debug).
+    match result.as_ref().map(|_| ()).map_err(At::error) {
         Err(Error::TooManyPixels {
             width,
             height,
             max_pixels,
         }) => {
-            assert_eq!(width, OVERSIZED_W);
-            assert_eq!(height, OVERSIZED_H);
-            assert_eq!(max_pixels, 120_000_000);
+            assert_eq!(*width, OVERSIZED_W);
+            assert_eq!(*height, OVERSIZED_H);
+            assert_eq!(*max_pixels, 120_000_000);
         }
         other => panic!("expected Error::TooManyPixels, got {other:?}"),
     }
@@ -100,10 +101,11 @@ fn opt_out_zero_allows_oversized_declaration() {
         PixelRange::Full,
         MatrixCoefficients::BT601,
     );
+    let debug_view = result.as_ref().map(|_| ()).map_err(At::error);
     assert!(
-        !matches!(result, Err(Error::TooManyPixels { .. })),
+        !matches!(debug_view, Err(Error::TooManyPixels { .. })),
         "with_max_pixels(0) must disable the cap, so the oversized request \
-         must not be rejected with TooManyPixels; got {result:?}"
+         must not be rejected with TooManyPixels; got {debug_view:?}"
     );
 }
 
@@ -121,8 +123,70 @@ fn custom_cap_below_default_rejects_between() {
         PixelRange::Full,
         MatrixCoefficients::BT601,
     );
+    let debug_view = result.as_ref().map(|_| ()).map_err(At::error);
     assert!(
-        matches!(result, Err(Error::TooManyPixels { max_pixels, .. }) if max_pixels == 1_000_000),
-        "1 MP cap must reject a 2 MP request with TooManyPixels(max=1_000_000); got {result:?}"
+        matches!(debug_view, Err(Error::TooManyPixels { max_pixels, .. }) if *max_pixels == 1_000_000),
+        "1 MP cap must reject a 2 MP request with TooManyPixels(max=1_000_000); got {debug_view:?}"
+    );
+}
+
+/// Regression for the audit's debuggability finding: zenravif used to discard
+/// rav1e's error reason and report a fixed `"Encoding error reported by rav1e"`
+/// string. A width above rav1e's 65535 maximum trips rav1e's
+/// `InvalidConfig::InvalidWidth` at context construction (before any frame is
+/// allocated); the resulting `Error::EncodingError` MUST now carry rav1e's own
+/// reason text.
+#[test]
+fn rav1e_error_reason_is_preserved_not_a_fixed_string() {
+    // 70000 exceeds rav1e's 65535 width maximum. The cap is disabled so the
+    // oversized declaration sails past the pre-flight guard and fails inside
+    // rav1e's config validation — before the plane iterator is consumed, so
+    // the empty iterator is never read and no large buffer is allocated.
+    let enc = Encoder::new()
+        .with_speed(10)
+        .with_num_threads(Some(1))
+        .with_max_pixels(0);
+    let err = enc
+        .encode_raw_planes_8_bit(
+            70_000,
+            1,
+            empty_planes(),
+            None::<[u8; 0]>,
+            PixelRange::Full,
+            MatrixCoefficients::BT601,
+        )
+        // Map Ok to `()` so `expect_err` (which needs `T: Debug`) can be used —
+        // EncodedImage isn't Debug.
+        .map(|_| ())
+        .expect_err("width 70000 exceeds rav1e's 65535 maximum and must fail");
+
+    match err.error() {
+        Error::EncodingError(detail) => {
+            let reason = detail.reason();
+            // The preserved reason must reflect *what* failed. rav1e's message
+            // for the dimension check mentions the offending value and bound.
+            assert!(
+                reason.contains("width") || reason.contains("height"),
+                "rav1e reason should name the failing dimension, got: {reason:?}"
+            );
+            // And it must NOT be the old fixed placeholder.
+            assert_ne!(
+                reason, "Encoding error reported by rav1e",
+                "the reason must be rav1e's, not the old fixed string"
+            );
+            // The full Display should include the preserved reason too.
+            let displayed = err.error().to_string();
+            assert!(
+                displayed.contains(reason),
+                "Error Display should embed the preserved reason; got: {displayed:?}"
+            );
+        }
+        other => panic!("expected Error::EncodingError with a preserved reason, got {other:?}"),
+    }
+
+    // The `At<Error>` trace must carry at least one located frame.
+    assert!(
+        err.frame_count() >= 1,
+        "the encode error should carry a file:line trace frame"
     );
 }
