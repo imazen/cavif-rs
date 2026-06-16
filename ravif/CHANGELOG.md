@@ -2,6 +2,23 @@
 
 ## [Unreleased]
 
+### Added
+- `Encoder::with_max_pixels(u64)` builder and `DEFAULT_MAX_PIXELS` const (120
+  megapixels). The encode functions now reject any request whose
+  `width * height` exceeds the cap **pre-flight** — before allocating planes or
+  building the rav1e context — returning the new `Error::TooManyPixels { width,
+  height, max_pixels }` variant. `Error` is `#[non_exhaustive]`, so the added
+  variant is non-breaking. Pass `with_max_pixels(0)` to disable the cap
+  (unlimited) for already-trusted dimensions.
+
+### Fixed
+- Encode paths no longer fail open on attacker-controlled dimensions. The three
+  call sites that forced zenrav1e's `max_pixel_count` guard to `u64::MAX` (in
+  `av1encoder.rs` and `animated.rs`) now forward the configured `max_pixels`
+  value instead, so rav1e's own guard is not nulled, and a zenravif-side
+  pre-flight dimension check runs at every still/animation encode entry point.
+  Previously a server passing unbounded `w x h` got no pre-flight rejection.
+
 ### Changed
 - Add `CHANGELOG.md` to published package `include` list so crate consumers see release history
 

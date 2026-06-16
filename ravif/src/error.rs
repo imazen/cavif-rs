@@ -13,6 +13,15 @@ quick_error! {
         TooFewPixels {
             display("Provided buffer is smaller than width * height")
         }
+        /// The requested image dimensions exceed the configured pixel cap.
+        ///
+        /// Returned pre-flight (before any heavy encoding work) when
+        /// `width * height` is greater than the encoder's `max_pixels`
+        /// limit (default 120 megapixels). Raise or disable the limit with
+        /// [`crate::Encoder::with_max_pixels`] (pass `0` to disable).
+        TooManyPixels { width: usize, height: usize, max_pixels: u64 } {
+            display("Image {}x{} ({} pixels) exceeds the configured limit of {} pixels", width, height, (*width as u64).saturating_mul(*height as u64), max_pixels)
+        }
         Unsupported(msg: &'static str) {
             display("Not supported: {}", msg)
         }
