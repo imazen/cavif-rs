@@ -1592,8 +1592,8 @@ impl SpeedTweaks {
             }),
             lru_on_skip: Some(speed <= 1),
             non_square_partition_max_threshold: Some(match speed {
-                0..=1 => BlockSize::BLOCK_64X64,
-                2..=3 => BlockSize::BLOCK_32X32,
+                0..=2 => BlockSize::BLOCK_64X64,
+                3 => BlockSize::BLOCK_32X32,
                 _ => BlockSize::BLOCK_8X8,
             }),
             min_tile_size: match speed {
