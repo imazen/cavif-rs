@@ -1529,10 +1529,34 @@ pub(crate) struct SpeedTweaks {
     pub segmentation: Option<SegmentationLevel>,
     pub lru_on_skip: Option<bool>,
     pub non_square_partition_max_threshold: Option<BlockSize>,
+    /// Offer AV1's mixed 3-way partition types (HORZ_A/B, VERT_A/B) in the
+    /// RDO search. ~1.5x encode time for a small compression win — the s1
+    /// "deep" mode ingredient (zenrav1e#27).
+    // dead_code: not applied until the zenrav1e dep bump (the knob lands
+    // post-0.1.4); the apply line in `speed_settings()` is commented until
+    // then. Remove the allow when uncommenting.
+    #[allow(dead_code)]
+    pub mixed_3way_partitions: Option<bool>,
+    /// Recursion depth of the topdown SPLIT-trial cost refinement (1 = the
+    /// shipped one-level estimate; measured depth-2 verdict below at the
+    /// `split_trial_depth` arm — zenrav1e#27).
+    // dead_code: same release-gating as mixed_3way_partitions above.
+    #[allow(dead_code)]
+    pub split_trial_depth: Option<u8>,
     pub min_tile_size: u16,
 }
 
 impl SpeedTweaks {
+    /// Master switch for the speed-1 "deep" arms (mixed 3-way partitions,
+    /// unconditional tx RDO, tuned partition range, deeper SPLIT trial).
+    /// FALSE until the zenrav1e dep bumps past 0.1.4: the knobs the deep
+    /// arms rely on land on zenrav1e master after that release, and the
+    /// partition-range change is only validated on the fixed SPLIT-trial
+    /// estimate. While false, `from_my_preset` output is byte-identical to
+    /// the pre-s1 table at every speed. Flip at the dep bump and uncomment
+    /// the two apply lines in `speed_settings()` (see zenrav1e#27).
+    const S1_DEEP_ARMS_LIVE: bool = false;
+
     pub fn from_my_preset(speed: u8, quantizer: u8) -> Self {
         // Use fixed quantizer thresholds instead of quality_to_quantizer()
         // so these don't shift when the quality curve changes
@@ -1543,8 +1567,15 @@ impl SpeedTweaks {
         Self {
             speed_preset: speed,
 
+            // Speed 1 is the "deep" maximum-RD mode (no longer byte-identical
+            // to speed 2): mixed 3-way partition types, unconditional
+            // tx-size/type RDO, and partition_range (4,32) at every quality —
+            // the winner of the 16/32/64 s1-bundle ablation (zenavif
+            // benchmarks/rd_gap_s1_2026-07-02.tsv; 64 helps only a few smooth
+            // images and bleeds elsewhere, 16 starves large blocks).
             partition_range: Some(match speed {
                 0 => (4, 64.min(max_block_size)),
+                1 if Self::S1_DEEP_ARMS_LIVE => (4, 32.min(max_block_size)),
                 1 if low_quality => (4, 64.min(max_block_size)),
                 2 if low_quality => (4, 32.min(max_block_size)),
                 1..=4 => (4, 16),
@@ -1568,7 +1599,12 @@ impl SpeedTweaks {
             // big blocks disabled at 3
 
             // these two are together?
-            rdo_tx_decision: Some(speed <= 4 && !high_quality), // it tends to blur subtle textures
+            // Speed 1 keeps tx RDO on at every quality: the !high_quality
+            // gate is a matched-speed tradeoff (~7.5x time at -Q80-95 for
+            // -5.7% median bytes AND better ssim2 — measured 2026-07-01,
+            // zenavif docs/RD_GAP_VS_LIBAOM.md §6b); s1 deliberately spends
+            // that time.
+            rdo_tx_decision: Some(if speed <= 1 && Self::S1_DEEP_ARMS_LIVE { true } else { speed <= 4 && !high_quality }), // it tends to blur subtle textures
             reduced_tx_set: Some(speed == 4 || speed >= 9), // It interacts with tx_domain_distortion too?
 
             // 4px blocks disabled at 5
@@ -1596,6 +1632,11 @@ impl SpeedTweaks {
                 3 => BlockSize::BLOCK_32X32,
                 _ => BlockSize::BLOCK_8X8,
             }),
+            mixed_3way_partitions: Some(speed <= 1 && Self::S1_DEEP_ARMS_LIVE),
+            // Depth 2 was measured (2026-07-02 s1 ablation): it rescues the
+            // worst outliers and turns the mean negative, but loses the
+            // pre-registered wins+median rule vs depth 1 at (4,32) — ships 1.
+            split_trial_depth: Some(1),
             min_tile_size: match speed {
                 0 => 4096,
                 1 => 2048,
@@ -1646,6 +1687,10 @@ impl SpeedTweaks {
         if let Some(v) = self.segmentation { speed_settings.segmentation = v; }
         if let Some(v) = self.lru_on_skip { speed_settings.lru_on_skip = v; }
         if let Some(v) = self.non_square_partition_max_threshold { speed_settings.partition.non_square_partition_max_threshold = v; }
+        // UNCOMMENT at the zenrav1e dep bump (knob lands post-0.1.4; see S1_DEEP_ARMS_LIVE):
+        // if let Some(v) = self.mixed_3way_partitions { speed_settings.partition.mixed_3way_partitions = v; }
+        // UNCOMMENT at the zenrav1e dep bump (knob lands post-0.1.4; see S1_DEEP_ARMS_LIVE):
+        // if let Some(v) = self.split_trial_depth { speed_settings.partition.split_trial_depth = v; }
 
         speed_settings
     }
