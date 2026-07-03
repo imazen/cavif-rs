@@ -1246,7 +1246,7 @@ impl Encoder<'_> {
         let override_fast_deblock = self.override_fast_deblock;
         let encode_color = move || {
             #[cfg_attr(not(feature = "imazen"), allow(unused_mut))]
-            let mut speed = SpeedTweaks::from_my_preset(self.speed, self.quantizer);
+            let mut speed = SpeedTweaks::from_my_preset(self.speed, self.quantizer, width.max(height));
             #[cfg(feature = "imazen")]
             {
                 if let Some(v) = override_cdef { speed.cdef = Some(v); }
@@ -1318,7 +1318,7 @@ impl Encoder<'_> {
                         height,
                         bit_depth: input_pixels_bit_depth.into(),
                         quantizer: self.alpha_quantizer.into(),
-                        speed: SpeedTweaks::from_my_preset(self.speed, self.alpha_quantizer),
+                        speed: SpeedTweaks::from_my_preset(self.speed, self.alpha_quantizer, width.max(height)),
                         threads,
                         pixel_range: PixelRange::Full,
                         chroma_sampling: ChromaSampling::Cs400,
@@ -1557,12 +1557,33 @@ impl SpeedTweaks {
     /// the two apply lines in `speed_settings()` (see zenrav1e#27).
     const S1_DEEP_ARMS_LIVE: bool = false;
 
-    pub fn from_my_preset(speed: u8, quantizer: u8) -> Self {
+    /// Small-rendition effort mode (zenavif size-decay non-tune A/B,
+    /// 2026-07-03): keep tx-size/type RDO ON at high quality when the frame's
+    /// long edge is below 1024. Measured (tune-off s2, 12 photo-like train
+    /// origins x 16-q, vs the byte-identical baseline): median ssim2 BD
+    /// +0.80 @256 / +0.88 @512, arm better 12/12 at BOTH sizes, butteraugli
+    /// 3n +2.5/+1.7 agreeing; moves the vs-aom-cpu2 median from +4.17 to
+    /// +3.31 @256 and +0.81 to -0.46 @512. Cost is confined to the hi-q band
+    /// where the gate flips (~6.5x those cells: ~0.3->2.0 s @256), which is
+    /// the point: small frames are where deep search is affordable — the
+    /// same philosophy as libaom's resolution-keyed speed features. FALSE
+    /// pending policy sign-off: the size-decay A/B's pre-registered rule
+    /// convicted NO default (this is a uniform win with size-conditional
+    /// COST, not a size-hostile default), so it ships as an opt-in flip, not
+    /// a conviction-driven fix. While false, `from_my_preset` output is
+    /// byte-identical to the previous table at every (speed, quantizer,
+    /// long_edge). Record: zenavif docs/RD_GAP_VS_LIBAOM.md "Non-tune size
+    /// decay isolation A/B" + benchmarks/hyperparam_sizedecay_nontune_2026-07-03.tsv.
+    const SMALL_PX_RDO_TX_LIVE: bool = false;
+
+    pub fn from_my_preset(speed: u8, quantizer: u8, long_edge: usize) -> Self {
         // Use fixed quantizer thresholds instead of quality_to_quantizer()
         // so these don't shift when the quality curve changes
         let low_quality = quantizer > 150;  // ~Q50 and below
         let high_quality = quantizer < 80;   // ~Q80 and above
         let max_block_size = if high_quality { 16 } else { 64 };
+        let small_px_rdo_tx =
+            Self::SMALL_PX_RDO_TX_LIVE && long_edge < 1024 && long_edge > 0;
 
         Self {
             speed_preset: speed,
@@ -1604,7 +1625,14 @@ impl SpeedTweaks {
             // -5.7% median bytes AND better ssim2 — measured 2026-07-01,
             // zenavif docs/RD_GAP_VS_LIBAOM.md §6b); s1 deliberately spends
             // that time.
-            rdo_tx_decision: Some(if speed <= 1 && Self::S1_DEEP_ARMS_LIVE { true } else { speed <= 4 && !high_quality }), // it tends to blur subtle textures
+            rdo_tx_decision: Some(if speed <= 1 && Self::S1_DEEP_ARMS_LIVE {
+                true
+            } else if small_px_rdo_tx && speed <= 4 {
+                // Small-rendition effort mode: see SMALL_PX_RDO_TX_LIVE.
+                true
+            } else {
+                speed <= 4 && !high_quality // it tends to blur subtle textures
+            }),
             reduced_tx_set: Some(speed == 4 || speed >= 9), // It interacts with tx_domain_distortion too?
 
             // 4px blocks disabled at 5

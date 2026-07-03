@@ -276,7 +276,7 @@ fn encode_sequence_av1<P: Pixel + Default>(
         (enc.quantizer, ChromaSampling::Cs420)
     };
 
-    let speed = SpeedTweaks::from_my_preset(enc.speed, quantizer);
+    let speed = SpeedTweaks::from_my_preset(enc.speed, quantizer, width.max(height));
 
     let color_description = if is_alpha {
         None
@@ -394,7 +394,7 @@ fn make_sequence_header<P: Pixel + Default>(
         (enc.quantizer, ChromaSampling::Cs420)
     };
 
-    let speed = SpeedTweaks::from_my_preset(enc.speed, quantizer);
+    let speed = SpeedTweaks::from_my_preset(enc.speed, quantizer, width.max(height));
 
     let config = EncoderConfig {
         width,
