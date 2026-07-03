@@ -123,6 +123,8 @@ pub type ColorSpace = ColorModel;
 
 pub use animated::{AnimFrame, AnimFrame16, AnimFrameRgba, AnimFrameRgba16, EncodedAnimation};
 pub use av1encoder::{AlphaColorMode, BitDepth, ChromaSubsampling, EncodedImage, Encoder, GainMapData, DEFAULT_MAX_PIXELS};
+#[cfg(feature = "imazen")]
+pub use av1encoder::FRAME_HINTS_LIVE;
 #[doc(inline)]
 pub use zenrav1e::prelude::{
     ChromaticityPoint, ColorPrimaries, ContentLight, MasteringDisplay,

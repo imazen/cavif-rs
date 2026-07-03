@@ -230,4 +230,29 @@ pub struct InternalParams {
     /// path at high q, or `Some(false)` to force the slow search at
     /// any speed for edge-sensitive content.
     pub fast_deblock: Option<bool>,
+
+    /// Per-64×64-superblock AC quantizer scale factors for the **color**
+    /// encode, in frame superblock raster order (`ceil(ceil(w/8)/8)`
+    /// columns × `ceil(ceil(h/8)/8)` rows). `1.0` is neutral; `< 1.0`
+    /// spends more bits on that superblock (finer quantizer); `> 1.0`
+    /// fewer. Alpha encodes never receive the map.
+    ///
+    /// **Pipeline stage:** quantization. Forwarded to zenrav1e as
+    /// `FrameHints::sb_q_scale`, which composes the scale onto the
+    /// superblock's (possibly tune-boosted) AC quantizer and codes it
+    /// through real per-SB `delta_q` syntax with the RDO distortion
+    /// follow (`(ac_q(base)/ac_q(sb))²`).
+    ///
+    /// **Why override:** closed-loop callers — e.g. zenavif's
+    /// butteraugli-diffmap-guided second pass — measure a first encode
+    /// with a perceptual metric, pool the per-pixel error map per
+    /// superblock, and re-encode with the worst superblocks boosted.
+    ///
+    /// **Release gate:** requires zenrav1e's unreleased `FrameHints`
+    /// input (master `c4047cec`). Until the zenrav1e dep bumps past
+    /// 0.1.4 the map is accepted but **not applied** (encodes are
+    /// byte-identical to `None`); `crate::av1encoder::FRAME_HINTS_LIVE`
+    /// reports whether the passthrough is active so callers can fail
+    /// honestly instead of silently double-encoding.
+    pub sb_q_scale: Option<Box<[f32]>>,
 }

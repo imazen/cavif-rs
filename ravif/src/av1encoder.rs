@@ -231,6 +231,10 @@ pub struct Encoder<'exif_slice> {
     /// better; on (fast) reduces blocking artifacts faster.
     #[cfg(feature = "imazen")]
     override_fast_deblock: Option<bool>,
+    /// Per-superblock AC quantizer scale map for the color encode
+    /// (closed-loop second pass; see `expert::InternalParams::sb_q_scale`).
+    #[cfg(feature = "imazen")]
+    override_sb_q_scale: Option<Box<[f32]>>,
     /// Enable trellis quantization (Viterbi DP coefficient optimization)
     #[cfg(feature = "imazen")]
     enable_trellis: bool,
@@ -303,6 +307,8 @@ impl<'exif_slice> Default for Encoder<'exif_slice> {
             override_lrf: None,
             #[cfg(feature = "imazen")]
             override_fast_deblock: None,
+            #[cfg(feature = "imazen")]
+            override_sb_q_scale: None,
             #[cfg(feature = "imazen")]
             enable_trellis: false,
             max_pixels: DEFAULT_MAX_PIXELS,
@@ -801,6 +807,7 @@ impl<'exif_slice> Encoder<'exif_slice> {
         self.override_complex_prediction_modes = params.complex_prediction_modes;
         self.override_lrf = params.lrf;
         self.override_fast_deblock = params.fast_deblock;
+        self.override_sb_q_scale = params.sb_q_scale;
         self
     }
 
@@ -1244,6 +1251,8 @@ impl Encoder<'_> {
         let override_lrf = self.override_lrf;
         #[cfg(feature = "imazen")]
         let override_fast_deblock = self.override_fast_deblock;
+        #[cfg(feature = "imazen")]
+        let override_sb_q_scale = self.override_sb_q_scale.clone();
         let encode_color = move || {
             #[cfg_attr(not(feature = "imazen"), allow(unused_mut))]
             let mut speed = SpeedTweaks::from_my_preset(self.speed, self.quantizer, width.max(height));
@@ -1295,6 +1304,8 @@ impl Encoder<'_> {
                     override_rdo_tx_decision,
                     #[cfg(feature = "imazen")]
                     enable_trellis: self.enable_trellis,
+                    #[cfg(feature = "imazen")]
+                    frame_hints_sb_q_scale: override_sb_q_scale,
                     max_pixels: self.max_pixels,
                     #[cfg(feature = "stop")]
                     stop_token: self.stop_token.clone(),
@@ -1343,6 +1354,10 @@ impl Encoder<'_> {
                         override_rdo_tx_decision: None,
                         #[cfg(feature = "imazen")]
                         enable_trellis: false,
+                        // Per-SB hints are a color-plane signal; the alpha
+                        // encode never receives the map.
+                        #[cfg(feature = "imazen")]
+                        frame_hints_sb_q_scale: None,
                         max_pixels: self.max_pixels,
                         #[cfg(feature = "stop")]
                         stop_token: self.stop_token.clone(),
@@ -1763,6 +1778,10 @@ struct Av1EncodeConfig {
     pub override_rdo_tx_decision: Option<bool>,
     #[cfg(feature = "imazen")]
     pub enable_trellis: bool,
+    /// Per-superblock AC quantizer scale map forwarded to zenrav1e as
+    /// `FrameHints::sb_q_scale` (release-gated: see [`FRAME_HINTS_LIVE`]).
+    #[cfg(feature = "imazen")]
+    pub frame_hints_sb_q_scale: Option<Box<[f32]>>,
     /// Forwarded to zenrav1e's `max_pixel_count` guard. `0` = unlimited.
     pub max_pixels: u64,
     #[cfg(feature = "stop")]
@@ -2063,6 +2082,19 @@ fn init_frame_1<P: zenrav1e::Pixel + Default>(
     Ok(())
 }
 
+/// Whether the per-superblock quantizer-scale hint passthrough
+/// (`expert::InternalParams::sb_q_scale` → zenrav1e `FrameHints`) is
+/// active in this build. **FALSE until the zenrav1e dep bumps past
+/// 0.1.4**: the `FrameHints` input lands on zenrav1e master at
+/// `c4047cec`, after the 0.1.4 release. While false, supplied maps are
+/// accepted but not applied (encodes stay byte-identical), so
+/// closed-loop callers MUST check this and fail honestly rather than
+/// silently paying for a second pass that cannot steer anything. At the
+/// dep bump: flip to `true` and uncomment the hinted-send block in
+/// `encode_to_av1`.
+#[cfg(feature = "imazen")]
+pub const FRAME_HINTS_LIVE: bool = false;
+
 #[inline(never)]
 fn encode_to_av1<P: zenrav1e::Pixel>(
     p: &Av1EncodeConfig,
@@ -2106,6 +2138,24 @@ fn encode_to_av1<P: zenrav1e::Pixel>(
     init(&mut frame).map_err(|e| at!(e))?;
     // `send_frame` returns a bare `EncoderStatus`; convert it (preserving the
     // rav1e reason) and trace it at this boundary.
+    //
+    // Per-SB quantizer-scale hints (closed-loop second pass). RELEASE-GATED:
+    // the `FrameParameters.frame_hints` field + `FrameHints` type need
+    // zenrav1e > 0.1.4 (master `c4047cec`). At the dep bump: flip
+    // `FRAME_HINTS_LIVE` to true and swap the plain send below for the
+    // commented hinted send.
+    #[cfg(feature = "imazen")]
+    if FRAME_HINTS_LIVE && p.frame_hints_sb_q_scale.is_some() {
+        // let hints = FrameHints::new()
+        //     .with_sb_q_scale(p.frame_hints_sb_q_scale.clone().unwrap());
+        // let params = FrameParameters {
+        //     frame_hints: Some(std::sync::Arc::new(hints)),
+        //     ..Default::default()
+        // };
+        // ctx.send_frame((std::sync::Arc::new(frame), params))
+        //     .map_err(|e| at!(Error::from(e)))?;
+        unreachable!("FRAME_HINTS_LIVE requires the zenrav1e dep bump (uncomment the hinted send)");
+    }
     ctx.send_frame(frame).map_err(|e| at!(Error::from(e)))?;
     ctx.flush();
 
