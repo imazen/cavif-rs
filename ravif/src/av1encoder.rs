@@ -1567,14 +1567,17 @@ impl SpeedTweaks {
     /// where the gate flips (~6.5x those cells: ~0.3->2.0 s @256), which is
     /// the point: small frames are where deep search is affordable — the
     /// same philosophy as libaom's resolution-keyed speed features. FALSE
-    /// pending policy sign-off: the size-decay A/B's pre-registered rule
-    /// convicted NO default (this is a uniform win with size-conditional
-    /// COST, not a size-hostile default), so it ships as an opt-in flip, not
-    /// a conviction-driven fix. While false, `from_my_preset` output is
-    /// byte-identical to the previous table at every (speed, quantizer,
-    /// long_edge). Record: zenavif docs/RD_GAP_VS_LIBAOM.md "Non-tune size
+    /// FLIPPED ON 2026-07-03 per user policy sign-off ("you can flip the
+    /// smallpx rdo live on"): small renditions (long_edge < 1024) keep
+    /// tx-size/type RDO at every quality. Measured (size-decay A/B,
+    /// pre-registered rule; the A/B convicted NO default -- this is a
+    /// uniform win with size-conditional COST taken deliberately):
+    /// VAL +1.44% ssim2 BD @256 / +1.30% @512 (12/12 both), butteraugli
+    /// +3.7/+2.9, vs-cpu2 val 512 flips negative; ~6.5x encode time on the
+    /// changed high-q small-frame cells only; >=1024 byte-identical by
+    /// construction. Record: zenavif docs/RD_GAP_VS_LIBAOM.md "Non-tune size
     /// decay isolation A/B" + benchmarks/hyperparam_sizedecay_nontune_2026-07-03.tsv.
-    const SMALL_PX_RDO_TX_LIVE: bool = false;
+    const SMALL_PX_RDO_TX_LIVE: bool = true;
 
     pub fn from_my_preset(speed: u8, quantizer: u8, long_edge: usize) -> Self {
         // Use fixed quantizer thresholds instead of quality_to_quantizer()
