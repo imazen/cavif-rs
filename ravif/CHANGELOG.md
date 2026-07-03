@@ -2,6 +2,16 @@
 
 ## [Unreleased]
 
+### Added
+- Small-rendition effort mode behind `SpeedTweaks::SMALL_PX_RDO_TX_LIVE`
+  (bae4880, byte-identical while `false`): when flipped, frames with long
+  edge < 1024 keep tx-size/type RDO on at high quality too. Measured on the
+  zenavif size-decay non-tune A/B (2026-07-03): median ssim2 BD-rate +0.80
+  @256 / +0.88 @512 vs the byte-identical baseline, better on 12/12 origins
+  at both sizes, butteraugli agreeing; cost confined to the changed hi-q
+  cells (~6.5x those cells, ~0.3->2.0 s at 256px). `from_my_preset` now
+  takes the frame long edge (internal signature).
+
 ## [0.2.0] - 2026-06-16
 
 ### Changed (BREAKING)
