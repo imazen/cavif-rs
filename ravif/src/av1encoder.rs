@@ -2063,11 +2063,36 @@ struct Av1EncodeConfig {
 }
 
 fn rav1e_config(p: &Av1EncodeConfig) -> Config {
-    // AV1 needs all the CPU power you can give it,
-    // except when it'd create inefficiently tiny tiles
+    // Tiles are zenrav1e's only intra-frame parallelism unit — but every
+    // additional tile costs bytes: each tile restarts entropy-context (CDF)
+    // adaptation and truncates cross-tile intra prediction, and the loss is
+    // largest exactly where bytes matter most (low quality / low-entropy
+    // content, where per-tile adaptation waste is a big share of a small
+    // file). Measured on 1024px-class stills (s6, tune-ss2, Q30/60/85,
+    // photo/screenshot/product): median +0.9% bytes at 2 tiles, +2.0% at 4,
+    // +7.9% at 64 — up to +28% at Q30 on smooth content. See zenavif
+    // docs/SPEED_LADDER.md ("Wrapper-level threading/tiling hazard") and
+    // zenavif benchmarks/rd_gap_fastwins_2026-07-04.tsv.
+    //
+    // Default policy: host core count must never silently degrade
+    // compression. The tile count is capped so every tile keeps at least
+    // TILE_RD_MIN_AREA pixels: images at or below 1 MP never tile (their
+    // bytes are identical on a 1-core laptop and a 48-core server), and
+    // larger images tile only as far as ≥1 MP tiles allow (4 MP → ≤4,
+    // 12 MP → ≤12), which keeps multi-core wins where encodes are actually
+    // slow. The speed-preset min_tile_size floor still applies where it is
+    // stricter (slow presets). A thread pool wider than the tile count
+    // idles during the tile encode loop, so small-image encodes give wall
+    // time back on many-core hosts — that is the RD-honest default; prefer
+    // a faster `speed` preset over tiling for cheaper small-image encodes.
     let tiles = {
         let threads = p.threads.unwrap_or_else(rayon::current_num_threads);
-        threads.min((p.width * p.height) / (p.speed.min_tile_size as usize).pow(2))
+        // Minimum pixel area per tile before the default policy adds a tile.
+        const TILE_RD_MIN_AREA: usize = 1 << 20; // 1 MP
+        let px = p.width * p.height;
+        threads
+            .min(px / TILE_RD_MIN_AREA)
+            .min(px / (p.speed.min_tile_size as usize).pow(2))
     };
     let speed_settings = p.speed.speed_settings();
     let cfg = Config::new()
