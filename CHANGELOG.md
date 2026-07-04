@@ -6,6 +6,19 @@ encoder by Kornel Lesiński, extended for the zenrav1e fork's still-image work.
 
 ## [Unreleased]
 
+### Added
+- **s6-s8 top-7 keyframe intra RDO arm, release-gated** (9e413ac0 message /
+  4b98f0f8 content): `S6_INTRA7_LIVE` const + `SpeedTweaks.intra_top7` —
+  the P2HEADS-measured global fast-tier arm (`ComplexKeyframes` +
+  `filter_intra=Some(false)`, the zenrav1e#5-safe top-7 form; the table's
+  forced-Simple top-3 stands otherwise). Measured (train26, tune-ss2,
+  veto-adjusted): s6 −0.56 / s8 −1.17 median BD, composition-stable on the
+  P1 partition ship point; on the P2 composed fast mode it added −0.39 med
+  train / −1.34 med val (composed+i7 13/13 better vs base, 0 butteraugli
+  vetoes). OFF until the zenrav1e dep bump (the `filter_intra` override
+  lands post-0.1.4); byte-identical while off (9/9-cell gate). Record:
+  zenavif `benchmarks/rd_gap_p2heads_2026-07-04.tsv`.
+
 ### Fixed
 - **Default tile count no longer scales with host core count** (55f8c935):
   the default policy computed `tiles = min(threads, px/min_tile_size²)`
