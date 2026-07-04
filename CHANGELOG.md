@@ -6,7 +6,40 @@ encoder by Kornel Lesiński, extended for the zenrav1e fork's still-image work.
 
 ## [Unreleased]
 
+### Fixed
+- **Default tile count no longer scales with host core count** (55f8c935):
+  the default policy computed `tiles = min(threads, px/min_tile_size²)`
+  with a 128–256 px floor at s≥4, so a 1 MP s6 encode on a 48-core host
+  silently split into 64 tiles — each tile restarts entropy-context (CDF)
+  adaptation and truncates cross-tile intra prediction. Measured on
+  1024px-class stills (train26, tune-ss2): the 48-core default cost
+  **+7.4% median ssim2 BD-rate (0/24 images better, up to +19.9% on a
+  single cell)** versus single-tile, and even 2 tiles cost +0.96% median
+  with zero winners. New default caps tiles so each keeps ≥1 MP of pixels:
+  ≤1 MP images never tile (bytes identical from 1 core to 48, verified
+  18/18 md5), larger images tile only as far as ≥1 MP tiles allow.
+  `--threads 1` output is byte-identical to the old policy (18/18 md5).
+  Honest give-back: tiling bought a real 5.9×/6.8× wall speedup at s6/s4
+  on 48 cores (170→1005 / 871→5911 ms/MP solo), which the default no
+  longer takes from bytes — use faster `-s` presets for cheap speed
+  (`--threads` still sizes the pool; pool width beyond the tile count was
+  measured bitstream-inert and buys no wall time). Record: zenavif
+  `benchmarks/rd_gap_fastwins_2026-07-04.tsv` + `docs/SPEED_LADDER.md`.
+
 ### Added
+- **s6–s8 depth-1 intra tx-size RDO arms** (release-gated
+  `S6_TX_SIZE_RDO_LIVE = false`, byte-identical until the zenrav1e
+  dep bump; 7baad5f9): the s4→s6 rdo_tx cliff decomposition (zenavif
+  FAST_TIER_PARITY_PLAN P0) measured that keeping ONLY the tx-SIZE half
+  of the coupled `rdo_tx_decision` boolean alive, depth-limited to 1
+  split level with DCT-only types, recovers 51% of the whole s6→s4 RD
+  step — full-grid confirm: s6 ssim2/ba3n/bamax median BD
+  −2.78/−3.95/−6.01 (18–20/24 better) at 1.67× solo wall; s8
+  −2.89/−3.52/−5.49 at 1.43×. The tx-TYPE half alone costs 2.4× with a
+  butteraugli-max veto and only pays composed (size1+reduced-types = 92%
+  of the step at 4.6× solo — recorded as P1 seed data, not shipped);
+  `reduced_tx_set` alone at s6/s8 is a measured null. At the dep bump:
+  flip the const + uncomment the two apply lines in `speed_settings()`.
 - `GainMapData` carries the gain map's full mux description: `alt_colr_cicp`
   (CICP `colr` for the alternate rendition on the `tmap` item; unsupported
   code points fail with `Error::Unsupported` instead of being dropped),
