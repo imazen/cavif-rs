@@ -102,6 +102,85 @@ pub struct GainMapData {
     pub bit_depth: u8,
     /// ISO 21496-1 binary metadata blob.
     pub metadata: Vec<u8>,
+    /// CICP color description of the **alternate rendition**, written as a
+    /// `colr` (nclx) property on the `tmap` item: `(color_primaries,
+    /// transfer_characteristics, matrix_coefficients, full_range)` as raw
+    /// ITU-T H.273 code points. Code points outside the muxer's supported
+    /// set fail the encode with [`Error::Unsupported`] rather than being
+    /// silently dropped.
+    pub alt_colr_cicp: Option<(u8, u8, u8, bool)>,
+    /// Chroma subsampling `(horizontal, vertical)` of the gain-map AV1
+    /// payload — written into the gain-map item's `av1C`, which must
+    /// describe the actual bitstream. `(false, false)` = 4:4:4,
+    /// `(true, true)` = 4:2:0.
+    pub chroma_subsampling: (bool, bool),
+    /// Whether the gain-map AV1 payload is monochrome (av1C flag).
+    pub monochrome: bool,
+    /// ICC profile of the **alternate rendition**, written as a `colr` box
+    /// of type `prof` on the `tmap` item. May be combined with
+    /// `alt_colr_cicp` (ISOBMFF allows one `colr` of each type per item).
+    pub alt_icc: Option<Vec<u8>>,
+}
+
+/// Map raw H.273 CICP code points onto the muxer's `ColrBox` enums,
+/// erroring honestly on code points the muxer cannot represent.
+fn gain_map_alt_colr_box(
+    p: u8,
+    t: u8,
+    m: u8,
+    full_range: bool,
+) -> Result<zenavif_serialize::ColrBox> {
+    use zenavif_serialize::constants::{
+        ColorPrimaries as CP, MatrixCoefficients as MC, TransferCharacteristics as TC,
+    };
+    let color_primaries = match p {
+        1 => CP::Bt709,
+        2 => CP::Unspecified,
+        6 => CP::Bt601,
+        9 => CP::Bt2020,
+        11 => CP::DciP3,
+        12 => CP::DisplayP3,
+        _ => return Err(at!(Error::Unsupported("gain map alt colr: color primaries code point"))),
+    };
+    let transfer_characteristics = match t {
+        1 => TC::Bt709,
+        2 => TC::Unspecified,
+        6 => TC::Bt601,
+        7 => TC::Smpte240,
+        8 => TC::Linear,
+        9 => TC::Log,
+        10 => TC::LogSqrt,
+        11 => TC::Iec61966,
+        13 => TC::Srgb,
+        14 => TC::Bt2020_10,
+        15 => TC::Bt2020_12,
+        16 => TC::Smpte2084,
+        17 => TC::Smpte428,
+        18 => TC::Hlg,
+        _ => {
+            return Err(at!(Error::Unsupported(
+                "gain map alt colr: transfer characteristics code point",
+            )));
+        }
+    };
+    let matrix_coefficients = match m {
+        0 => MC::Rgb,
+        1 => MC::Bt709,
+        2 => MC::Unspecified,
+        6 => MC::Bt601,
+        8 => MC::Ycgco,
+        9 => MC::Bt2020Ncl,
+        10 => MC::Bt2020Cl,
+        _ => return Err(at!(Error::Unsupported("gain map alt colr: matrix coefficients code point"))),
+    };
+    // `#[non_exhaustive]` prohibits literal construction outside the
+    // defining crate — build via Default + field assignment.
+    let mut colr = zenavif_serialize::ColrBox::default();
+    colr.color_primaries = color_primaries;
+    colr.transfer_characteristics = transfer_characteristics;
+    colr.matrix_coefficients = matrix_coefficients;
+    colr.full_range_flag = full_range;
+    Ok(colr)
 }
 
 /// The newly-created image file + extra info FYI
@@ -1619,6 +1698,20 @@ impl Encoder<'_> {
                 gm.bit_depth,
                 gm.metadata.clone(),
             );
+            // The gain-map item's av1C must describe its actual payload.
+            serializer_config.set_gain_map_chroma_subsampling(
+                zenavif_serialize::ChromaSubsampling {
+                    horizontal: gm.chroma_subsampling.0,
+                    vertical: gm.chroma_subsampling.1,
+                },
+            );
+            serializer_config.set_gain_map_monochrome(gm.monochrome);
+            if let Some((p, t, m, full)) = gm.alt_colr_cicp {
+                serializer_config.set_gain_map_alt_colr(gain_map_alt_colr_box(p, t, m, full)?);
+            }
+            if let Some(ref icc) = gm.alt_icc {
+                serializer_config.set_gain_map_alt_icc(icc.clone());
+            }
         }
         let avif_file = serializer_config.to_vec(&color, alpha.as_deref(), width as u32, height as u32, input_pixels_bit_depth);
         let color_byte_size = color.len();

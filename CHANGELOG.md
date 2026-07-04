@@ -7,6 +7,13 @@ encoder by Kornel Lesiński, extended for the zenrav1e fork's still-image work.
 ## [Unreleased]
 
 ### Added
+- `GainMapData` carries the gain map's full mux description: `alt_colr_cicp`
+  (CICP `colr` for the alternate rendition on the `tmap` item; unsupported
+  code points fail with `Error::Unsupported` instead of being dropped),
+  `alt_icc` (ICC-form alternate `colr`), and `chroma_subsampling` +
+  `monochrome` (written into the gain-map item's `av1C`, which previously
+  claimed 4:2:0 color for every byte-carried payload). Threaded to
+  zenavif-serialize's `set_gain_map_{alt_colr,alt_icc,chroma_subsampling,monochrome}`.
 - **`Encoder::encode_gray8` — true monochrome (Cs400) AVIF encoding**
   (imazen/zenavif#6): one `u8` luma sample per pixel in, a bitstream with
   only a luma plane out (no chroma planes coded). Output bytes are at
@@ -18,6 +25,11 @@ encoder by Kornel Lesiński, extended for the zenrav1e fork's still-image work.
   `av1C`/`pixi` container form comes from zenavif-serialize's
   `set_monochrome` (its spec-correct mono properties shipped earlier).
   MC is signaled `Unspecified` (mono has no chroma to describe).
+
+### Changed
+- `zenavif-serialize` dep floor → 0.2.0 (`set_gain_map_alt_icc`), supplied by
+  a `[patch.crates-io]` git pin until 0.2.0 publishes (drop the patch at the
+  dep bump).
 - `expert::InternalParams.sb_q_scale`: per-64×64-superblock AC quantizer
   scale map for the color encode, forwarded to zenrav1e as
   `FrameHints::sb_q_scale` (the closed-loop second-pass channel — see
