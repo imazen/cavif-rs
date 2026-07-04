@@ -1826,6 +1826,14 @@ pub(crate) struct SpeedTweaks {
     // then. Remove the allow when uncommenting.
     #[allow(dead_code)]
     pub mixed_3way_partitions: Option<bool>,
+    /// Top-7 keyframe intra RDO via `ComplexKeyframes` +
+    /// `filter_intra=Some(false)` (the zenrav1e#5-safe form) — the P2HEADS
+    /// measured global fast-tier arm (see `S6_INTRA7_LIVE`).
+    // dead_code: not applied until the zenrav1e dep bump (the filter_intra
+    // override lands post-0.1.4); the apply block in `speed_settings()` is
+    // commented until then. Remove the allow when uncommenting.
+    #[allow(dead_code)]
+    pub intra_top7: Option<bool>,
     /// Recursion depth of the topdown SPLIT-trial cost refinement (1 = the
     /// shipped one-level estimate; measured depth-2 verdict below at the
     /// `split_trial_depth` arm — zenrav1e#27).
@@ -1944,6 +1952,28 @@ impl SpeedTweaks {
     /// the dep bump and uncomment the apply block in `speed_settings()`.
     const S6_PART_PRUNE_LIVE: bool = false;
 
+    /// Master switch for the s6-s8 top-7 keyframe intra RDO arm (P2HEADS
+    /// 2026-07-04, FAST_TIER_PARITY_PLAN P2 head-3 axis; zenavif
+    /// benchmarks/rd_gap_p2heads_2026-07-04.tsv). The table forces
+    /// `Simple` (top-3 intra RDO) at every speed as the zenrav1e#5
+    /// filter_intra guard; the safe top-7 form is `ComplexKeyframes` +
+    /// `filter_intra=Some(false)` (the override knob landed
+    /// zenrav1e@49982460, post-0.1.4). Measured on train26 (coarse 6-q,
+    /// tune-ss2, veto-adjusted per-image BD): s6 −0.56 med / −0.72 mean
+    /// (17/24 better), s8 −1.17 med / −1.03 mean (16/24), composition-
+    /// stable on the P1 partition ship point (−0.51 med on-ship), one
+    /// +1.4 regressor (8268 screenshot) with no per-image feature
+    /// structure at n=24 → a GLOBAL arm, not a zenavif head. On the P2
+    /// composed fast mode it added −0.39 med (train26) / −1.34 med (VAL:
+    /// composed+i7 −5.32 vs base, 13/13 better, 0 butteraugli vetoes).
+    /// Solo cost: see the P2HEADS TSV timing section (p2t_intra7*).
+    /// FALSE until the zenrav1e dep bumps past 0.1.4 (the `filter_intra`
+    /// override lands after that release; ComplexKeyframes WITHOUT it
+    /// re-opens zenrav1e#5); while false, byte-identical at every speed.
+    /// Flip at the dep bump and uncomment the apply block in
+    /// `speed_settings()`.
+    const S6_INTRA7_LIVE: bool = false;
+
     /// Small-rendition effort mode (zenavif size-decay non-tune A/B,
     /// 2026-07-03): keep tx-size/type RDO ON at high quality when the frame's
     /// long edge is below 1024. Measured (tune-off s2, 12 photo-like train
@@ -2057,6 +2087,15 @@ impl SpeedTweaks {
                 _ => BlockSize::BLOCK_8X8,
             }),
             mixed_3way_partitions: Some(speed <= 1 && Self::S1_DEEP_ARMS_LIVE),
+            // s6-s8 top-7 keyframe intra RDO (P2HEADS head-3 axis; see
+            // S6_INTRA7_LIVE). None elsewhere = the forced-Simple top-3
+            // (s2-s5 unmeasured for this arm; s9-s10 drop angle deltas so
+            // the top-7 premium is a different question there).
+            intra_top7: if Self::S6_INTRA7_LIVE && (6..=8).contains(&speed) {
+                Some(true)
+            } else {
+                None
+            },
             // Depth 2 was measured (2026-07-02 s1 ablation): it rescues the
             // worst outliers and turns the mean negative, but loses the
             // pre-registered wins+median rule vs depth 1 at (4,32) — ships 1.
@@ -2142,6 +2181,12 @@ impl SpeedTweaks {
         if let Some(v) = self.use_satd_subpel { speed_settings.motion.use_satd_subpel = v; }
         if let Some(v) = self.fine_directional_intra { speed_settings.prediction.fine_directional_intra = v; }
         if let Some(v) = self.complex_prediction_modes { speed_settings.prediction.prediction_modes = if v { PredictionModesSetting::ComplexAll } else { PredictionModesSetting::Simple} }
+        // UNCOMMENT at the zenrav1e dep bump (the filter_intra override lands post-0.1.4; see S6_INTRA7_LIVE).
+        // Must stay AFTER the complex_prediction_modes apply (it refines the forced-Simple guard):
+        // if self.intra_top7 == Some(true) {
+        //     speed_settings.prediction.prediction_modes = PredictionModesSetting::ComplexKeyframes;
+        //     speed_settings.prediction.filter_intra = Some(false);
+        // }
         if let Some((min, max)) = self.partition_range {
             debug_assert!(min <= max);
             fn sz(s: u8) -> BlockSize {
