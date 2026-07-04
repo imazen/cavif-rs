@@ -1846,6 +1846,27 @@ pub(crate) struct SpeedTweaks {
     // dead_code: same release-gating as mixed_3way_partitions above.
     #[allow(dead_code)]
     pub rdo_tx_size_depth: Option<u8>,
+    /// P1 partition-pruning arm (zenrav1e `topdown_prune`, P1PART
+    /// 2026-07-04): NONE-first top-down candidate walk + the opt-in gates
+    /// below, used to keep HORZ/VERT partitions affordable at fast tiers
+    /// whose tables previously amputated them. See `S6_PART_PRUNE_LIVE`.
+    // dead_code: same release-gating as mixed_3way_partitions above.
+    #[allow(dead_code)]
+    pub prune_none_breakout: Option<f32>,
+    // dead_code: same release-gating as mixed_3way_partitions above.
+    #[allow(dead_code)]
+    pub prune_rect_margin: Option<f32>,
+    /// `Some(0.0)` = HORZ_4/VERT_4 (and mixed 3-way) candidates evaluated
+    /// only on SPLIT-dominant blocks (the one-sided NONE-dominance gate at
+    /// margin 0: any NONE advantage over the SPLIT-trial estimate skips
+    /// them) while HORZ/VERT stay unconditionally live — the shipped s4-s8
+    /// configuration.
+    // dead_code: same release-gating as mixed_3way_partitions above.
+    #[allow(dead_code)]
+    pub prune_four_way_margin: Option<f32>,
+    // dead_code: same release-gating as mixed_3way_partitions above.
+    #[allow(dead_code)]
+    pub prune_homogeneity_gate: Option<f32>,
     pub min_tile_size: u16,
 }
 
@@ -1881,6 +1902,47 @@ impl SpeedTweaks {
     /// byte-identical at every speed. Flip at the dep bump and uncomment
     /// the two apply lines in `speed_settings()`.
     const S6_TX_SIZE_RDO_LIVE: bool = false;
+
+    /// Master switch for the s4-s8 rect-partition liveness arms (P1PART
+    /// 2026-07-04, FAST_TIER_PARITY_PLAN P1 lever 1; zenavif
+    /// benchmarks/rd_gap_p1part_2026-07-04.tsv). The speed table amputated
+    /// HORZ/VERT at s4+ (`non_square_partition_max_threshold` 8×8) and the
+    /// SPEED_LADDER wedge map attributed the un-recovered share of the
+    /// interiors/food/nature families to exactly that. Ships the measured
+    /// gate triple over 16×16-threshold liveness: NONE-first walk +
+    /// skip-gated `none_breakout` 1.0 + 16-parent 4-ways restricted to
+    /// SPLIT-dominant blocks (`four_way_margin=0.0`, one-sided) +
+    /// homogeneity vargate 2.0 — cheaper than the same liveness ungated at
+    /// every tier (solo 2.16/2.08/1.75× vs 2.33/2.23/1.91× at s6/s8/s4).
+    /// Full-grid 12-q confirms (train26 tune-ss2, vs s6+size1 / s8+size1 /
+    /// stock-s4 bases; ssim2/ba3n/bamax medians): s6 −2.89/−2.51/−2.45
+    /// (24/24 both primaries), s8 −3.00/−2.49/−2.86 (24/24), s4
+    /// −1.94/−2.32/−2.74 (22/23) — no butteraugli-max veto anywhere.
+    /// Ladder movement (photos, vs cached aom-allintra arms): s6 vs
+    /// cpu4def-ai +1.4→−4.6/−6.3 (crossed both metrics), vs cpu4iq-ai
+    /// +7.1→+2.9/+0.9; s8 vs cpu6iq-ai +0.3→−3.6/−5.1 (crossed); s4 vs
+    /// cpu2def-ai +2.8→−0.9/−5.6 (crossed). s6 per-family recovery of the
+    /// remaining (s6+size1)→s4 step: interiors 60%, food 68%, nps 63%,
+    /// scans 183%, screens 175%, ALL 77%. Honest budget note: the ~1.7×
+    /// per-lever aspiration is NOT met — the cheapest liveness point IS
+    /// 1.75-2.2×; rects-only (`four_way_margin=-1.0`, no other gates)
+    /// measured −2.40 median at ~1.8× solo as the fallback, and the
+    /// beyond-budget vargate/max32 arms (88-104% step recovery at
+    /// 2.4-2.9×) are recorded as P2 per-image-hint targets.
+    /// The beyond-budget points (homogeneity-vargate arms at 2.4-2.9×
+    /// keeping 88-104% of the remaining s6→s4 step) are recorded in the TSV
+    /// as P2 per-image-hint targets, not shipped. Gate decomposition:
+    /// NONE-dominance margins on rects are a measured dead end (26-48%
+    /// retention in both semantics), the skip-gated none_breakout is a null
+    /// at every τ, and the 4×4-log-var homogeneity gate is the one gate
+    /// that pays — but it exceeds the per-lever time budget, so the shipped
+    /// config is pure liveness + 4-way-off. FALSE until the zenrav1e dep
+    /// bumps past 0.1.4 (the `topdown_prune` knob lands after that
+    /// release); while false, `from_my_preset` output is byte-identical at
+    /// every speed (the 16×16 threshold value is ALSO gated: it is live in
+    /// bottom-up edge-superblock coding even on registry builds). Flip at
+    /// the dep bump and uncomment the apply block in `speed_settings()`.
+    const S6_PART_PRUNE_LIVE: bool = false;
 
     /// Small-rendition effort mode (zenavif size-decay non-tune A/B,
     /// 2026-07-03): keep tx-size/type RDO ON at high quality when the frame's
@@ -1986,6 +2048,12 @@ impl SpeedTweaks {
             non_square_partition_max_threshold: Some(match speed {
                 0..=2 => BlockSize::BLOCK_64X64,
                 3 => BlockSize::BLOCK_32X32,
+                // s4-s8 rect liveness (P1PART; see S6_PART_PRUNE_LIVE). The
+                // value itself must stay gated: it is live in bottom-up
+                // edge-superblock coding even on registry zenrav1e builds.
+                // s9-s10 unmeasured (s10's 16×16 block floor would make
+                // 16×16-threshold rects its ONLY split shapes): keep 8×8.
+                4..=8 if Self::S6_PART_PRUNE_LIVE => BlockSize::BLOCK_16X16,
                 _ => BlockSize::BLOCK_8X8,
             }),
             mixed_3way_partitions: Some(speed <= 1 && Self::S1_DEEP_ARMS_LIVE),
@@ -2008,6 +2076,37 @@ impl SpeedTweaks {
                 && (6..=8).contains(&speed)
             {
                 Some(1)
+            } else {
+                None
+            },
+            // s4-s8 keep HORZ/VERT live (rect threshold 16×16, gated above)
+            // under the NONE-first topdown_prune walk with the measured
+            // gate triple: skip-gated none_breakout τ=1.0, 16-parent
+            // 4-ways restricted to SPLIT-dominant blocks (one-sided margin
+            // 0.0), homogeneity vargate 2.0 — cheaper than the same
+            // liveness without the gates at every tier (solo 2.16/2.08/
+            // 1.75× vs 2.33/2.23/1.91× at s6/s8/s4) at equal RD (see
+            // S6_PART_PRUNE_LIVE). All-None elsewhere = historical
+            // candidate walk exactly.
+            prune_none_breakout: if Self::S6_PART_PRUNE_LIVE
+                && (4..=8).contains(&speed)
+            {
+                Some(1.0)
+            } else {
+                None
+            },
+            prune_rect_margin: None,
+            prune_four_way_margin: if Self::S6_PART_PRUNE_LIVE
+                && (4..=8).contains(&speed)
+            {
+                Some(0.0)
+            } else {
+                None
+            },
+            prune_homogeneity_gate: if Self::S6_PART_PRUNE_LIVE
+                && (4..=8).contains(&speed)
+            {
+                Some(2.0)
             } else {
                 None
             },
@@ -2069,6 +2168,17 @@ impl SpeedTweaks {
         // if let Some(v) = self.rdo_tx_size_override { speed_settings.transform.rdo_tx_size_override = Some(v); }
         // UNCOMMENT at the zenrav1e dep bump (knobs land post-0.1.4; see S6_TX_SIZE_RDO_LIVE):
         // if let Some(v) = self.rdo_tx_size_depth { speed_settings.transform.rdo_tx_size_depth = Some(v); }
+        // UNCOMMENT at the zenrav1e dep bump (knob lands post-0.1.4; see S6_PART_PRUNE_LIVE):
+        // if self.prune_none_breakout.is_some() || self.prune_rect_margin.is_some()
+        //     || self.prune_four_way_margin.is_some() || self.prune_homogeneity_gate.is_some()
+        // {
+        //     speed_settings.partition.topdown_prune = Some(TopdownPartitionPrune {
+        //         none_breakout: self.prune_none_breakout,
+        //         rect_margin: self.prune_rect_margin,
+        //         four_way_margin: self.prune_four_way_margin,
+        //         homogeneity_gate: self.prune_homogeneity_gate,
+        //     });
+        // }
 
         speed_settings
     }

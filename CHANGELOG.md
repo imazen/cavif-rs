@@ -27,6 +27,29 @@ encoder by Kornel Lesiński, extended for the zenrav1e fork's still-image work.
   `benchmarks/rd_gap_fastwins_2026-07-04.tsv` + `docs/SPEED_LADDER.md`.
 
 ### Added
+- **s4–s8 rect-partition liveness arms** (release-gated `S6_PART_PRUNE_LIVE=
+  false`; P1PART 2026-07-04, FAST_TIER_PARITY_PLAN P1 lever 1): the speed
+  table amputated HORZ/VERT at s4+ (`non_square_partition_max_threshold`
+  8×8); these arms raise the threshold to 16×16 under the zenrav1e
+  `topdown_prune` NONE-first candidate walk with the measured gate triple
+  (skip-gated `none_breakout` 1.0, 16-parent 4-ways restricted to
+  SPLIT-dominant blocks via one-sided `four_way_margin=0.0`, homogeneity
+  vargate 2.0) — cheaper than the same liveness ungated at every tier
+  (solo 2.16/2.08/1.75× vs 2.33/2.23/1.91× at s6/s8/s4). Full-grid 12-q
+  confirms (train26 tune-ss2, ssim2/ba3n/bamax medians vs the s6+size1 /
+  s8+size1 / stock-s4 bases): s6 −2.89/−2.51/−2.45 (24/24 both
+  primaries), s8 −3.00/−2.49/−2.86 (24/24), s4 −1.94/−2.32/−2.74 (22/23),
+  no butteraugli-max veto. Ladder movement (photos, vs cached
+  aom-allintra): s6 vs cpu4def-ai +1.4→−4.6/−6.3 (crossed), s8 vs
+  cpu6iq-ai +0.3→−3.6/−5.1 (crossed), s4 vs cpu2def-ai +2.8→−0.9/−5.6
+  (crossed). The beyond-budget vargate/max32 arms (88–104% of the
+  remaining s6→s4 step at 2.4–2.9×) are recorded in the zenavif TSV as
+  per-image-hint targets, not shipped. Byte-identical at
+  every speed while gated (18/18-cell md5 vs 4f2caa93; the threshold value
+  is gated too — it is live in bottom-up edge-superblock coding even on
+  registry zenrav1e). Flip at the zenrav1e dep bump (knob lands
+  post-0.1.4). Record: zenavif `benchmarks/rd_gap_p1part_2026-07-04.tsv`.
+
 - **s6–s8 depth-1 intra tx-size RDO arms** (release-gated
   `S6_TX_SIZE_RDO_LIVE = false`, byte-identical until the zenrav1e
   dep bump; 7baad5f9): the s4→s6 rdo_tx cliff decomposition (zenavif
