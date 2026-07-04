@@ -1122,6 +1122,187 @@ impl Encoder<'_> {
         }
     }
 
+    /// Encodes an 8-bit grayscale image as a true monochrome AVIF
+    /// (AV1 `Cs400`: the bitstream codes only a luma plane — no chroma).
+    ///
+    /// `buffer` holds one `u8` luma sample per pixel (sRGB transfer).
+    /// The image's `av1C`/`pixi` properties are written in monochrome form
+    /// (seq_profile 0/2, 1 channel).
+    ///
+    /// Compared to expanding gray to RGB and calling [`Self::encode_rgb`],
+    /// output bytes are at parity on typical content (neutral chroma is
+    /// skip-coded by the RDO anyway), but encoding is measurably faster —
+    /// about 2–3× — because chroma RDO is skipped entirely
+    /// (imazen/zenavif#6, benchmarks/mono_encode_ab_2026-06-11.txt).
+    ///
+    /// [`Self::with_bit_depth`] is honored: `Eight` stays 8-bit,
+    /// `Ten`/`Auto` widen to 10-bit, `Twelve` to 12-bit.
+    /// Alpha-related settings are ignored (there is no alpha item).
+    pub fn encode_gray8(&self, buffer: Img<&[u8]>) -> Result<EncodedImage> {
+        // Pre-flight: reject oversized dimensions before any pixel work.
+        self.check_pixel_limit(buffer.width(), buffer.height()).at()?;
+        let (width, height) = (buffer.width(), buffer.height());
+        match self.output_depth {
+            BitDepth::Eight => {
+                self.encode_gray_planes_internal::<u8>(width, height, buffer.pixels(), 8).at()
+            },
+            BitDepth::Ten | BitDepth::Auto => {
+                self.encode_gray_planes_internal::<u16>(width, height, buffer.pixels().map(to_ten), 10).at()
+            },
+            BitDepth::Twelve => {
+                self.encode_gray_planes_internal::<u16>(width, height, buffer.pixels().map(to_twelve), 12).at()
+            },
+        }
+    }
+
+    fn encode_gray_planes_internal<P: zenrav1e::Pixel + Default>(
+        &self,
+        width: usize,
+        height: usize,
+        planes: impl IntoIterator<Item = P> + Send,
+        input_pixels_bit_depth: u8,
+    ) -> Result<EncodedImage> {
+        let color_pixel_range = self.pixel_range.unwrap_or(PixelRange::Full);
+
+        // Monochrome has no chroma to describe; MC is signaled Unspecified
+        // (Identity would additionally be rejected for non-4:4:4 layouts).
+        let color_description = Some(ColorDescription {
+            transfer_characteristics: self.transfer_characteristics
+                .unwrap_or(TransferCharacteristics::SRGB),
+            color_primaries: self.color_primaries
+                .unwrap_or(ColorPrimaries::BT709),
+            matrix_coefficients: MatrixCoefficients::Unspecified,
+        });
+
+        let threads = self.threads.map(|threads| {
+            if threads > 0 { threads } else { rayon::current_num_threads() }
+        });
+        let cancel_token = self.cancellation_token.as_ref();
+        let deadline = self.timeout.map(|timeout| std::time::Instant::now() + timeout);
+
+        #[cfg_attr(not(feature = "imazen"), allow(unused_mut))]
+        let mut speed = SpeedTweaks::from_my_preset(self.speed, self.quantizer, width.max(height));
+        #[cfg(feature = "imazen")]
+        {
+            if let Some(v) = self.override_cdef { speed.cdef = Some(v); }
+            if let Some(v) = self.override_rdo_tx_decision { speed.rdo_tx_decision = Some(v); }
+            if let Some(v) = self.override_sgr_complexity { speed.sgr_complexity_full = Some(v); }
+            if let Some(v) = self.override_lru_on_skip { speed.lru_on_skip = Some(v); }
+            if let Some(v) = self.override_segmentation_complex {
+                speed.segmentation = Some(if v { SegmentationLevel::Complex } else { SegmentationLevel::Simple });
+            }
+            if let Some(v) = self.override_encode_bottomup { speed.encode_bottomup = Some(v); }
+            if let Some(r) = self.override_partition_range { speed.partition_range = Some(r); }
+            if let Some(v) = self.override_complex_prediction_modes {
+                speed.complex_prediction_modes = Some(v);
+            }
+            if let Some(v) = self.override_lrf { speed.lrf = Some(v); }
+            if let Some(v) = self.override_fast_deblock { speed.fast_deblock = Some(v); }
+        }
+
+        let color = encode_to_av1::<P>(
+            &Av1EncodeConfig {
+                width,
+                height,
+                bit_depth: input_pixels_bit_depth.into(),
+                quantizer: self.quantizer.into(),
+                speed,
+                threads,
+                pixel_range: color_pixel_range,
+                chroma_sampling: ChromaSampling::Cs400,
+                color_description,
+                mastering_display: self.mastering_display,
+                content_light: self.content_light,
+                #[cfg(feature = "imazen")]
+                enable_qm: self.enable_qm,
+                #[cfg(feature = "imazen")]
+                enable_vaq: self.enable_vaq,
+                #[cfg(feature = "imazen")]
+                vaq_strength: self.vaq_strength,
+                #[cfg(feature = "imazen")]
+                tune_still_image: self.tune_still_image,
+                #[cfg(feature = "imazen")]
+                lossless: self.lossless,
+                #[cfg(feature = "imazen")]
+                seg_boost: self.seg_boost,
+                #[cfg(feature = "imazen")]
+                override_cdef: self.override_cdef,
+                #[cfg(feature = "imazen")]
+                override_rdo_tx_decision: self.override_rdo_tx_decision,
+                #[cfg(feature = "imazen")]
+                enable_trellis: self.enable_trellis,
+                // The gray plane IS the primary luma plane, so the
+                // keyframe-scoped per-SB delta-q hints apply to it exactly
+                // as they do to the color path's luma.
+                #[cfg(feature = "imazen")]
+                frame_hints_sb_q_scale: self.override_sb_q_scale.clone(),
+                max_pixels: self.max_pixels,
+                #[cfg(feature = "stop")]
+                stop_token: self.stop_token.clone(),
+            },
+            cancel_token,
+            deadline,
+            |frame| init_frame_1(width, height, planes, frame, cancel_token, deadline),
+        ).at()?;
+
+        let mut serializer_config = zenavif_serialize::Aviffy::new();
+        serializer_config
+            .set_monochrome(true)
+            .matrix_coefficients(zenavif_serialize::constants::MatrixCoefficients::Unspecified);
+
+        let tc = self.transfer_characteristics.unwrap_or(TransferCharacteristics::SRGB);
+        serializer_config.set_transfer_characteristics(map_transfer_characteristics(tc));
+        let cp = self.color_primaries.unwrap_or(ColorPrimaries::BT709);
+        serializer_config.set_color_primaries(map_color_primaries(cp));
+        serializer_config.set_full_color_range(color_pixel_range == PixelRange::Full);
+
+        if let Some(exif) = &self.exif {
+            serializer_config.set_exif(exif.to_vec());
+        }
+        if let Some(md) = self.mastering_display {
+            serializer_config.set_mastering_display(
+                [(md.primaries[0].x, md.primaries[0].y),
+                 (md.primaries[1].x, md.primaries[1].y),
+                 (md.primaries[2].x, md.primaries[2].y)],
+                (md.white_point.x, md.white_point.y),
+                md.max_luminance, md.min_luminance,
+            );
+        }
+        if let Some(cl) = self.content_light {
+            serializer_config.set_content_light_level(
+                cl.max_content_light_level, cl.max_frame_average_light_level,
+            );
+        }
+        if let Some(angle) = self.rotation {
+            serializer_config.set_rotation(angle);
+        }
+        if let Some(axis) = self.mirror {
+            serializer_config.set_mirror(axis);
+        }
+        if let Some(ref icc) = self.icc_profile {
+            serializer_config.set_icc_profile(icc.clone());
+        }
+        if let Some(ref xmp) = self.xmp {
+            serializer_config.set_xmp(xmp.clone());
+        }
+        if let Some(ref gm) = self.gain_map {
+            serializer_config.set_gain_map(
+                gm.av1_data.clone(),
+                gm.width,
+                gm.height,
+                gm.bit_depth,
+                gm.metadata.clone(),
+            );
+        }
+
+        let avif_file = serializer_config.to_vec(&color, None, width as u32, height as u32, input_pixels_bit_depth);
+        let color_byte_size = color.len();
+
+        Ok(EncodedImage {
+            avif_file, color_byte_size, alpha_byte_size: 0,
+        })
+    }
+
     /// Encodes AVIF from 3 planar channels that are in the color space described by `matrix_coefficients`,
     /// with sRGB transfer characteristics and color primaries.
     ///

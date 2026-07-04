@@ -7,6 +7,17 @@ encoder by Kornel Lesiński, extended for the zenrav1e fork's still-image work.
 ## [Unreleased]
 
 ### Added
+- **`Encoder::encode_gray8` — true monochrome (Cs400) AVIF encoding**
+  (imazen/zenavif#6): one `u8` luma sample per pixel in, a bitstream with
+  only a luma plane out (no chroma planes coded). Output bytes are at
+  parity with the gray→RGB expansion path on typical content (neutral
+  chroma is skip-coded), but encoding skips chroma RDO entirely — measured
+  2–3× faster (zenavif `benchmarks/mono_encode_ab_2026-06-11.txt`).
+  Honors `with_bit_depth` (8/10/12), pixel range, CICP/ICC/EXIF/XMP,
+  rotation/mirror, and the imazen-feature encoder knobs; the mono
+  `av1C`/`pixi` container form comes from zenavif-serialize's
+  `set_monochrome` (its spec-correct mono properties shipped earlier).
+  MC is signaled `Unspecified` (mono has no chroma to describe).
 - `expert::InternalParams.sb_q_scale`: per-64×64-superblock AC quantizer
   scale map for the color encode, forwarded to zenrav1e as
   `FrameHints::sb_q_scale` (the closed-loop second-pass channel — see
