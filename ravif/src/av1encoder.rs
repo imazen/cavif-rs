@@ -1832,6 +1832,20 @@ pub(crate) struct SpeedTweaks {
     // dead_code: same release-gating as mixed_3way_partitions above.
     #[allow(dead_code)]
     pub split_trial_depth: Option<u8>,
+    /// Decoupled intra tx-SIZE RDO (zenrav1e `rdo_tx_size_override`): keep
+    /// the tx-size search alive at tiers whose `rdo_tx_decision` is off,
+    /// without re-enabling the tx-TYPE search (DCT-only). The s6-s8 arm of
+    /// the FASTWINS P0 decomposition — see `S6_TX_SIZE_RDO_LIVE`.
+    // dead_code: same release-gating as mixed_3way_partitions above.
+    #[allow(dead_code)]
+    pub rdo_tx_size_override: Option<bool>,
+    /// Depth cap for the intra tx-size RDO walk (zenrav1e
+    /// `rdo_tx_size_depth`): 1 = largest + one split level, the measured
+    /// sweet spot of the P0 decomposition (depth 2 adds ~-0.7% median BD
+    /// for +10% time).
+    // dead_code: same release-gating as mixed_3way_partitions above.
+    #[allow(dead_code)]
+    pub rdo_tx_size_depth: Option<u8>,
     pub min_tile_size: u16,
 }
 
@@ -1845,6 +1859,28 @@ impl SpeedTweaks {
     /// the pre-s1 table at every speed. Flip at the dep bump and uncomment
     /// the two apply lines in `speed_settings()` (see zenrav1e#27).
     const S1_DEEP_ARMS_LIVE: bool = false;
+
+    /// Master switch for the s6-s8 depth-1 tx-size RDO arms (FASTWINS P0,
+    /// FAST_TIER_PARITY_PLAN; zenavif benchmarks/rd_gap_fastwins_2026-07-04
+    /// .tsv). The s4->s6 cliff decomposition measured that the coupled
+    /// `rdo_tx_decision` boolean's two halves price very differently at s6
+    /// (train26, tune-ss2, vs s6-base): depth-1 tx-SIZE RDO with DCT-only
+    /// types recovers 51% of the whole s6->s4 RD step (median ssim2 BD
+    /// -2.8%, butteraugli-3n -4.4%, butteraugli-max -6.7%, 19-20/24 images
+    /// better) at ~1.5x encode time, while the tx-TYPE half costs 2.4x for
+    /// -4.5% ssim2 with a butteraugli-max VETO (+0.29 median, better on only
+    /// 10/23) — so only the size half ships. Wedge-family recovery at s6:
+    /// 6000 scans -14.2%, 9000 clipart -21.8%, 5000 nps -11.3%, 9226
+    /// AI-products -7.4% (the traffic-weighted wedge). s8 mirrors it
+    /// (-2.9/-4.4/-6.5 at 1.4x). Known cost: fam-7000 plots pay +2..18%
+    /// bytes on ~3 KB near-lossless-floor files (worst 7050 +19 BD) — the
+    /// class the intraBC/near-lossless program owns, accepted per the
+    /// wins+median rule. FALSE until the zenrav1e dep bumps past 0.1.4
+    /// (the `rdo_tx_size_override`/`rdo_tx_size_depth` knobs land after
+    /// that release); while false, `from_my_preset` output is
+    /// byte-identical at every speed. Flip at the dep bump and uncomment
+    /// the two apply lines in `speed_settings()`.
+    const S6_TX_SIZE_RDO_LIVE: bool = false;
 
     /// Small-rendition effort mode (zenavif size-decay non-tune A/B,
     /// 2026-07-03): keep tx-size/type RDO ON at high quality when the frame's
@@ -1957,6 +1993,24 @@ impl SpeedTweaks {
             // worst outliers and turns the mean negative, but loses the
             // pre-registered wins+median rule vs depth 1 at (4,32) — ships 1.
             split_trial_depth: Some(1),
+            // s6-s8 keep depth-1 intra tx-SIZE RDO (DCT-only): the measured
+            // half of the s4->s6 rdo_tx cliff that pays for itself (see
+            // S6_TX_SIZE_RDO_LIVE). None elsewhere = follow rdo_tx_decision
+            // exactly (s2-s4 coupled behavior unchanged; s9-s10 unmeasured).
+            rdo_tx_size_override: if Self::S6_TX_SIZE_RDO_LIVE
+                && (6..=8).contains(&speed)
+            {
+                Some(true)
+            } else {
+                None
+            },
+            rdo_tx_size_depth: if Self::S6_TX_SIZE_RDO_LIVE
+                && (6..=8).contains(&speed)
+            {
+                Some(1)
+            } else {
+                None
+            },
             min_tile_size: match speed {
                 0 => 4096,
                 1 => 2048,
@@ -2011,6 +2065,10 @@ impl SpeedTweaks {
         // if let Some(v) = self.mixed_3way_partitions { speed_settings.partition.mixed_3way_partitions = v; }
         // UNCOMMENT at the zenrav1e dep bump (knob lands post-0.1.4; see S1_DEEP_ARMS_LIVE):
         // if let Some(v) = self.split_trial_depth { speed_settings.partition.split_trial_depth = v; }
+        // UNCOMMENT at the zenrav1e dep bump (knobs land post-0.1.4; see S6_TX_SIZE_RDO_LIVE):
+        // if let Some(v) = self.rdo_tx_size_override { speed_settings.transform.rdo_tx_size_override = Some(v); }
+        // UNCOMMENT at the zenrav1e dep bump (knobs land post-0.1.4; see S6_TX_SIZE_RDO_LIVE):
+        // if let Some(v) = self.rdo_tx_size_depth { speed_settings.transform.rdo_tx_size_depth = Some(v); }
 
         speed_settings
     }
