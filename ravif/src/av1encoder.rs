@@ -2367,13 +2367,23 @@ fn rav1e_config(p: &Av1EncodeConfig) -> Config {
     // idles during the tile encode loop, so small-image encodes give wall
     // time back on many-core hosts — that is the RD-honest default; prefer
     // a faster `speed` preset over tiling for cheaper small-image encodes.
+    //
+    // The tile count is a pure function of image size and speed preset —
+    // NOT of the thread count. The earlier form of this policy still took
+    // `min(threads, …)`, which made >1 MP bitstreams depend on the host's
+    // core count / `with_num_threads` value (a 2.3 MP encode differed
+    // between threads=1 and threads=8 — caught by zenavif's
+    // `gate_kit determinism`, engineering-baseline invariant A3). That
+    // violated this comment's own principle: byte output must be identical
+    // on a 1-core laptop and a 48-core server. The thread pool now sizes
+    // only the tile-encode worker pool (wall time), never the bitstream;
+    // a low-thread host encoding a large image pays the same small
+    // area-capped tile overhead as everyone else and stays byte-identical.
     let tiles = {
-        let threads = p.threads.unwrap_or_else(rayon::current_num_threads);
         // Minimum pixel area per tile before the default policy adds a tile.
         const TILE_RD_MIN_AREA: usize = 1 << 20; // 1 MP
         let px = p.width * p.height;
-        threads
-            .min(px / TILE_RD_MIN_AREA)
+        (px / TILE_RD_MIN_AREA)
             .min(px / (p.speed.min_tile_size as usize).pow(2))
     };
     let speed_settings = p.speed.speed_settings();
