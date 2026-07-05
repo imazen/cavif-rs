@@ -7,6 +7,22 @@ encoder by Kornel Lesiński, extended for the zenrav1e fork's still-image work.
 ## [Unreleased]
 
 ### Added
+- **Re-tiered s9/s10 rows, release-gated** (S10 program, zenavif
+  `docs/S10_PROGRAM.md` + `benchmarks/rd_gap_s10_2026-07-05.tsv`):
+  `S10_RETIER_LIVE` const + `SpeedTweaks.num_modes_rdo_override`. The
+  JPEG-anchored scoreboard measured the shipped s10 row losing to
+  mozjpeg-class JPEG outright on bytes at matched ssim2 (registry 1.05-1.06x
+  at ssim2≤60), and decomposed the cliff: `tx_domain_rate` −7.45% median
+  ssim2 BD for 1.14x time, the (16,16) partition floor −13.5% at s9, CDEF-on
+  −1.70% at 1.04x, depth-1 tx-size RDO −7.8%. Re-tiered rows: **s10' = txdr
+  off + CDEF on + SATD-decides intra (−5.7/−6.9/−7.8 BD vs the old rung at
+  0.95x its time — strictly better and faster; 4.3x mozjpeg-class encode
+  time at 0.69-0.78x its bytes)**; **s9' = s10' + partition floor (8,16) +
+  depth-1 tx-size RDO (−15.1/−18.2/−23.6 vs old s9 at 1.62x; 9.0x jpeg-moz
+  at 0.54-0.60x bytes)**. OFF until the zenrav1e dep bump (measured configs
+  include the release-gated ss2 tune + palette; the num_modes_rdo knob is
+  post-0.1.4); byte-identical while off (6/6 md5 gate at s9/s10 ×
+  q30/60/90). Conformance: 0 failures across ~4,000 PALCONF'd cells.
 - **s6-s8 top-7 keyframe intra RDO arm, release-gated** (9e413ac0 message /
   4b98f0f8 content): `S6_INTRA7_LIVE` const + `SpeedTweaks.intra_top7` —
   the P2HEADS-measured global fast-tier arm (`ComplexKeyframes` +

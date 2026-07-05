@@ -1875,6 +1875,14 @@ pub(crate) struct SpeedTweaks {
     // dead_code: same release-gating as mixed_3way_partitions above.
     #[allow(dead_code)]
     pub prune_homogeneity_gate: Option<f32>,
+    /// SATD-decides intra budget (zenrav1e `num_modes_rdo_override`,
+    /// 071e9844): cap the number of SATD-ranked intra candidates that get
+    /// full RD. `Some(1)` = RD codes only the SATD winner — the aom
+    /// winner_mode_reduction analog, the S10-program s9'/s10' ingredient
+    /// (see `S10_RETIER_LIVE`).
+    // dead_code: same release-gating as mixed_3way_partitions above.
+    #[allow(dead_code)]
+    pub num_modes_rdo_override: Option<u8>,
     pub min_tile_size: u16,
 }
 
@@ -1996,6 +2004,41 @@ impl SpeedTweaks {
     /// decay isolation A/B" + benchmarks/hyperparam_sizedecay_nontune_2026-07-03.tsv.
     const SMALL_PX_RDO_TX_LIVE: bool = true;
 
+    /// Master switch for the S10-program re-tiered s9/s10 rows (2026-07-05,
+    /// zenavif docs/S10_PROGRAM.md + benchmarks/rd_gap_s10_2026-07-05.tsv).
+    /// The JPEG-anchored scoreboard measured the shipped s10 row LOSING to
+    /// mozjpeg-class JPEG outright on bytes at matched ssim2 (registry
+    /// config 1.05-1.06x jpeg-moz at ssim2<=60, >=1.0 in 7/12 train26
+    /// families; with the ss2 tune 0.79-0.84x at 4.6x jpeg-moz encode
+    /// time), and decomposed the cliff: `tx_domain_rate` -7.45% median
+    /// ssim2 BD for 1.14x (22/22 better, all three metrics), CDEF-on
+    /// -1.70% at 1.04x (22-23/23), the (16,16) partition floor -13.5/-17.1/
+    /// -20.7 at s9 (23/23), depth-1 tx-size RDO -7.8/-13.3/-13.0 at 1.49x;
+    /// fine-directional-intra and reduced_tx_set measured null, (8,32)
+    /// ruled out (+10/+18 — 32px blocks misprice under TX LARGEST).
+    /// Re-tiered rows (measured composed, train26 6q, tune-ss2+palette,
+    /// 0 CELLFAIL / 0 PALCONF failures anywhere):
+    ///   s10' = txdr off + CDEF on + SATD-decides intra (num_modes_rdo 1):
+    ///          the c11 arm — see the TSV; c1 (txdr+cdef alone) is -8.8%
+    ///          median BD at 1.24x, SATD-decides claws back ~19% time.
+    ///   s9'  = s10' + partition floor (8,16) + depth-1 tx-size RDO: the
+    ///          c7/c13 shape — -28.9/-33.8/-31.2 median BD vs the old s10
+    ///          rung at 2.09x its RD-pass time (~678 solo ms/MP = 9.2x
+    ///          mozjpeg-class JPEG, bytes 0.54-0.61x JPEG at matched ssim2
+    ///          50-80); the old s9 (411 ms/MP) sat at 0.67-0.78x.
+    /// The old rungs were off the pareto the moment the scoreboard anchor
+    /// became JPEG; the re-tiered ladder is monotone: s10' ~340 ms/MP →
+    /// s9' ~680 → s8-composed ~2394 (solo internal, 1 MP renditions).
+    /// FALSE until the zenrav1e dep bumps past 0.1.4: the measured configs
+    /// include Tune::Ssimulacra2 + PaletteMode::Auto (release-gated) and
+    /// the tx-size/num_modes_rdo override knobs land after that release.
+    /// While false, `from_my_preset` output is byte-identical at every
+    /// speed. Flip at the dep bump together with the tune-default decision
+    /// and uncomment the num_modes_rdo apply line in `speed_settings()`.
+    /// Alpha-channel caveat: these rows also govern the alpha (Cs400)
+    /// encode; the corpus carries no alpha — cost impact there unmeasured.
+    const S10_RETIER_LIVE: bool = false;
+
     pub fn from_my_preset(speed: u8, quantizer: u8, long_edge: usize) -> Self {
         // Use fixed quantizer thresholds instead of quality_to_quantizer()
         // so these don't shift when the quality curve changes
@@ -2021,6 +2064,9 @@ impl SpeedTweaks {
                 2 if low_quality => (4, 32.min(max_block_size)),
                 1..=4 => (4, 16),
                 5..=8 => (8, 16),
+                // S10 program: the (16,16) floor was the s9 cliff's dominant
+                // owner (-13.5/-17.1/-20.7 median BD, 23/23; S10_RETIER_LIVE).
+                9 if Self::S10_RETIER_LIVE => (8, 16),
                 _ => (16, 16),
             }),
 
@@ -2062,10 +2108,21 @@ impl SpeedTweaks {
 
             // 8px blocks disabled at 8
             lrf: Some(low_quality && speed <= 8), // hardly any help for hi-q images. recovers some q at low quality
-            cdef: Some(low_quality && speed <= 9), // hardly any help for hi-q images. recovers some q at low quality
+            // S10 program: CDEF forced on at s9/s10 measured -1.70/-2.45/
+            // -1.89 median BD at 1.04x (22-23/23 better) at s10; +0.30
+            // marginal at s9 (S10_RETIER_LIVE).
+            cdef: Some(if Self::S10_RETIER_LIVE && speed >= 9 {
+                true
+            } else {
+                low_quality && speed <= 9
+            }), // hardly any help for hi-q images. recovers some q at low quality
 
             inter_tx_split: Some(speed >= 9), // mixed bag even when it works, and it backfires if not used together with reduced_tx_set
-            tx_domain_rate: Some(speed >= 10), // 20% faster, but also 10% larger files!
+            // The "10% larger files" was under-sold: on the JPEG-anchored
+            // scoreboard txdr costs -7.45% median ssim2 BD (22/22 better off,
+            // all metrics) for only 1.14x time — the s10 cliff's #1 owner
+            // (S10_RETIER_LIVE turns it off).
+            tx_domain_rate: Some(speed >= 10 && !Self::S10_RETIER_LIVE), // 20% faster, but also 10% larger files!
 
             tx_domain_distortion: None, // very mixed bag, sometimes helps speed sometimes it doesn't
             use_satd_subpel: Some(false), // doesn't make sense
@@ -2104,15 +2161,17 @@ impl SpeedTweaks {
             // half of the s4->s6 rdo_tx cliff that pays for itself (see
             // S6_TX_SIZE_RDO_LIVE). None elsewhere = follow rdo_tx_decision
             // exactly (s2-s4 coupled behavior unchanged; s9-s10 unmeasured).
-            rdo_tx_size_override: if Self::S6_TX_SIZE_RDO_LIVE
-                && (6..=8).contains(&speed)
+            rdo_tx_size_override: if (Self::S6_TX_SIZE_RDO_LIVE
+                && (6..=8).contains(&speed))
+                || (Self::S10_RETIER_LIVE && speed == 9)
             {
                 Some(true)
             } else {
                 None
             },
-            rdo_tx_size_depth: if Self::S6_TX_SIZE_RDO_LIVE
-                && (6..=8).contains(&speed)
+            rdo_tx_size_depth: if (Self::S6_TX_SIZE_RDO_LIVE
+                && (6..=8).contains(&speed))
+                || (Self::S10_RETIER_LIVE && speed == 9)
             {
                 Some(1)
             } else {
@@ -2146,6 +2205,14 @@ impl SpeedTweaks {
                 && (4..=8).contains(&speed)
             {
                 Some(2.0)
+            } else {
+                None
+            },
+            // S10 program: SATD-decides at the re-tiered ultra-fast rungs
+            // (s10 solo 337 -> ~277 ms/MP for BD ~-0.9; on the composed s9'
+            // it keeps 89% of the c4 win at 66% of its time). None elsewhere.
+            num_modes_rdo_override: if Self::S10_RETIER_LIVE && speed >= 9 {
+                Some(1)
             } else {
                 None
             },
@@ -2213,6 +2280,8 @@ impl SpeedTweaks {
         // if let Some(v) = self.rdo_tx_size_override { speed_settings.transform.rdo_tx_size_override = Some(v); }
         // UNCOMMENT at the zenrav1e dep bump (knobs land post-0.1.4; see S6_TX_SIZE_RDO_LIVE):
         // if let Some(v) = self.rdo_tx_size_depth { speed_settings.transform.rdo_tx_size_depth = Some(v); }
+        // UNCOMMENT at the zenrav1e dep bump (knob lands post-0.1.4; see S10_RETIER_LIVE):
+        // if let Some(v) = self.num_modes_rdo_override { speed_settings.prediction.num_modes_rdo_override = Some(v); }
         // UNCOMMENT at the zenrav1e dep bump (knob lands post-0.1.4; see S6_PART_PRUNE_LIVE):
         // if self.prune_none_breakout.is_some() || self.prune_rect_margin.is_some()
         //     || self.prune_four_way_margin.is_some() || self.prune_homogeneity_gate.is_some()
