@@ -314,6 +314,10 @@ pub struct Encoder<'exif_slice> {
     /// (closed-loop second pass; see `expert::InternalParams::sb_q_scale`).
     #[cfg(feature = "imazen")]
     override_sb_q_scale: Option<Box<[f32]>>,
+    /// Screen-content palette mode for the color/gray streams (zenrav1e
+    /// `PaletteMode`; the alpha stream never receives it). See
+    /// [`Encoder::with_palette`].
+    palette_mode: Option<PaletteMode>,
     /// Enable trellis quantization (Viterbi DP coefficient optimization)
     #[cfg(feature = "imazen")]
     enable_trellis: bool,
@@ -388,6 +392,7 @@ impl<'exif_slice> Default for Encoder<'exif_slice> {
             override_fast_deblock: None,
             #[cfg(feature = "imazen")]
             override_sb_q_scale: None,
+            palette_mode: None,
             #[cfg(feature = "imazen")]
             enable_trellis: false,
             max_pixels: DEFAULT_MAX_PIXELS,
@@ -899,6 +904,17 @@ impl<'exif_slice> Encoder<'exif_slice> {
         self
     }
 
+    /// Screen-content palette mode for the color/gray streams (the alpha
+    /// stream never receives it). `PaletteMode::Off` is zenrav1e's default;
+    /// `Auto` ports libaom's screen-content detection; `Always` forces the
+    /// tool on. Content-gating belongs to the caller (zenavif's
+    /// `palette_gate` drives this from `patch_fraction`).
+    #[must_use]
+    pub fn with_palette(mut self, mode: PaletteMode) -> Self {
+        self.palette_mode = Some(mode);
+        self
+    }
+
     /// Validate the configuration without encoding.
     ///
     /// Returns `Err(ValidationError)` for the **first** failure found, in
@@ -1278,6 +1294,9 @@ impl Encoder<'_> {
             if let Some(v) = self.override_lrf { speed.lrf = Some(v); }
             if let Some(v) = self.override_fast_deblock { speed.fast_deblock = Some(v); }
         }
+        if self.palette_mode.is_some() {
+            speed.palette = self.palette_mode;
+        }
 
         let color = encode_to_av1::<P>(
             &Av1EncodeConfig {
@@ -1514,6 +1533,7 @@ impl Encoder<'_> {
         let override_fast_deblock = self.override_fast_deblock;
         #[cfg(feature = "imazen")]
         let override_sb_q_scale = self.override_sb_q_scale.clone();
+        let palette_mode = self.palette_mode;
         let encode_color = move || {
             #[cfg_attr(not(feature = "imazen"), allow(unused_mut))]
             let mut speed = SpeedTweaks::from_my_preset(self.speed, self.quantizer, width.max(height));
@@ -1533,6 +1553,9 @@ impl Encoder<'_> {
                 }
                 if let Some(v) = override_lrf { speed.lrf = Some(v); }
                 if let Some(v) = override_fast_deblock { speed.fast_deblock = Some(v); }
+            }
+            if palette_mode.is_some() {
+                speed.palette = palette_mode;
             }
             encode_to_av1::<P>(
                 &Av1EncodeConfig {
@@ -1821,6 +1844,11 @@ pub(crate) struct SpeedTweaks {
     pub segmentation: Option<SegmentationLevel>,
     pub lru_on_skip: Option<bool>,
     pub non_square_partition_max_threshold: Option<BlockSize>,
+    /// Screen-content palette mode (zenrav1e `PaletteMode`, default `Off`).
+    /// Set by the [`Encoder::with_palette`] pass-through — zenavif's
+    /// `palette_gate` drives it (pf-threshold → Always/Auto). Color/gray
+    /// streams only; the alpha stream never receives it.
+    pub palette: Option<PaletteMode>,
     /// Offer AV1's mixed 3-way partition types (HORZ_A/B, VERT_A/B) in the
     /// RDO search. ~1.5x encode time for a small compression win — the s1
     /// "deep" mode ingredient (zenrav1e#27).
@@ -2146,6 +2174,9 @@ impl SpeedTweaks {
                 4..=8 if Self::S6_PART_PRUNE_LIVE => BlockSize::BLOCK_16X16,
                 _ => BlockSize::BLOCK_8X8,
             }),
+            // Palette rides the Encoder-level pass-through (with_palette),
+            // never the preset: content-gating lives in zenavif's palette_gate.
+            palette: None,
             mixed_3way_partitions: Some(speed <= 1 && Self::S1_DEEP_ARMS_LIVE),
             // s6-s8 top-7 keyframe intra RDO (P2HEADS head-3 axis; see
             // S6_INTRA7_LIVE). None elsewhere = the forced-Simple top-3
@@ -2275,6 +2306,7 @@ impl SpeedTweaks {
         if let Some(v) = self.segmentation { speed_settings.segmentation = v; }
         if let Some(v) = self.lru_on_skip { speed_settings.lru_on_skip = v; }
         if let Some(v) = self.non_square_partition_max_threshold { speed_settings.partition.non_square_partition_max_threshold = v; }
+        if let Some(v) = self.palette { speed_settings.prediction.palette = v; }
         // Uncommented on the cooptloop branch (zenrav1e path dep supplies the knobs):
         if let Some(v) = self.mixed_3way_partitions { speed_settings.partition.mixed_3way_partitions = v; }
         if let Some(v) = self.split_trial_depth { speed_settings.partition.split_trial_depth = v; }

@@ -128,7 +128,7 @@ pub use av1encoder::FRAME_HINTS_LIVE;
 #[doc(inline)]
 pub use zenrav1e::prelude::{
     ChromaticityPoint, ColorPrimaries, ContentLight, MasteringDisplay,
-    MatrixCoefficients, PixelRange, TransferCharacteristics,
+    MatrixCoefficients, PaletteMode, PixelRange, TransferCharacteristics,
 };
 
 mod dirtyalpha;
