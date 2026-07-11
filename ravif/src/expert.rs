@@ -255,4 +255,54 @@ pub struct InternalParams {
     /// reports whether the passthrough is active so callers can fail
     /// honestly instead of silently double-encoding.
     pub sb_q_scale: Option<Box<[f32]>>,
+
+    // ---- fast-tier budget knobs (the P2HEADS/FASTWINS passthrough set) ----
+    // These forward zenavif's per-image budget heads (fast_heads.rs: TxBudget /
+    // PartitionBudget) and support isolation sweeps. Each maps onto the
+    // matching SpeedTweaks field, overriding the preset AFTER its own
+    // speed/quality keying.
+    /// Decoupled intra tx-SIZE RDO (`Some(false)` = withhold → the stock
+    /// TX_MODE_LARGEST fast-tier table; `Some(true)` = force on). The
+    /// TxBudget::Largest head withhold.
+    pub rdo_tx_size_override: Option<bool>,
+    /// Depth cap for the intra tx-size RDO walk (1 = largest + one split
+    /// level, the measured P0 sweet spot).
+    pub rdo_tx_size_depth: Option<u8>,
+    /// Decoupled intra tx-TYPE RDO (`Some(true)` adds the type search
+    /// without re-coupling the size half). Half of TxBudget::Min.
+    pub rdo_tx_type_override: Option<bool>,
+    /// Restrict the tx-type search to AV1's reduced set (pairs with
+    /// `rdo_tx_type_override` — the other half of TxBudget::Min; null
+    /// standalone per FASTWINS).
+    pub reduced_tx_set: Option<bool>,
+    /// Cap on the intra-mode RDO candidate count (e.g. `Some(5)` = the
+    /// S4TIER top-5 arm that dominated top-7 at mode level).
+    pub num_modes_rdo_override: Option<u8>,
+    /// Non-square (rect) partition liveness threshold in PIXELS
+    /// (`{4,8,16,32,64,128}`): rects are offered on blocks at or below it.
+    /// `Some(32)` is PartitionBudget::Max32's rect half.
+    pub non_square_partition_max_threshold: Option<u8>,
+    /// Topdown NONE-first prune: skip-gated NONE-breakout τ (1.0 = the
+    /// landed P1 gate).
+    ///
+    /// **The four `prune_*` fields override as a UNIT**, unlike every other
+    /// field here: if ANY of them is `Some`, all four replace the preset's
+    /// prune gates, and a `None` inside the unit CLEARS that gate (an
+    /// `Option<f32>` per gate cannot otherwise express "remove the preset's
+    /// gate"). E.g. PartitionBudget::Max32 passes `{breakout: Some(1.0),
+    /// rect: None, four_way: None, homogeneity: Some(2.0)}` = 4-ways fully
+    /// live under breakout+vargate (the measured `r16m32_bkvg2` point).
+    pub prune_none_breakout: Option<f32>,
+    /// Topdown prune: rect NONE-dominance margin (measured dead — kept for
+    /// isolation sweeps). Unit-override semantics: see
+    /// [`Self::prune_none_breakout`].
+    pub prune_rect_margin: Option<f32>,
+    /// Topdown prune: one-sided 4-way margin (0.0 = 4-ways only on
+    /// SPLIT-dominant blocks — the landed gate). Unit-override semantics:
+    /// see [`Self::prune_none_breakout`].
+    pub prune_four_way_margin: Option<f32>,
+    /// Topdown prune: 4×4-log-variance homogeneity vargate (2.0 = the
+    /// landed P1 gate). Unit-override semantics: see
+    /// [`Self::prune_none_breakout`].
+    pub prune_homogeneity_gate: Option<f32>,
 }

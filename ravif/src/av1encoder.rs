@@ -314,6 +314,28 @@ pub struct Encoder<'exif_slice> {
     /// (closed-loop second pass; see `expert::InternalParams::sb_q_scale`).
     #[cfg(feature = "imazen")]
     override_sb_q_scale: Option<Box<[f32]>>,
+    /// Fast-tier budget passthroughs (see the matching
+    /// `expert::InternalParams` fields): tx-size/type/reduced-set/num-modes
+    /// overrides applied onto `SpeedTweaks` after the preset.
+    #[cfg(feature = "imazen")]
+    override_rdo_tx_size: Option<bool>,
+    #[cfg(feature = "imazen")]
+    override_rdo_tx_size_depth: Option<u8>,
+    #[cfg(feature = "imazen")]
+    override_rdo_tx_type: Option<bool>,
+    #[cfg(feature = "imazen")]
+    override_reduced_tx_set: Option<bool>,
+    #[cfg(feature = "imazen")]
+    override_num_modes_rdo: Option<u8>,
+    /// Rect-partition liveness threshold in pixels (mapped to `BlockSize`
+    /// at apply time).
+    #[cfg(feature = "imazen")]
+    override_non_square_max_px: Option<u8>,
+    /// The topdown-prune gate quartet, overriding AS A UNIT when
+    /// `Some` (a `None` inside the unit clears that gate) — see
+    /// `expert::InternalParams::prune_none_breakout`.
+    #[cfg(feature = "imazen")]
+    override_prune: Option<PruneQuartet>,
     /// Screen-content palette mode for the color/gray streams (zenrav1e
     /// `PaletteMode`; the alpha stream never receives it). See
     /// [`Encoder::with_palette`].
@@ -392,6 +414,20 @@ impl<'exif_slice> Default for Encoder<'exif_slice> {
             override_fast_deblock: None,
             #[cfg(feature = "imazen")]
             override_sb_q_scale: None,
+            #[cfg(feature = "imazen")]
+            override_rdo_tx_size: None,
+            #[cfg(feature = "imazen")]
+            override_rdo_tx_size_depth: None,
+            #[cfg(feature = "imazen")]
+            override_rdo_tx_type: None,
+            #[cfg(feature = "imazen")]
+            override_reduced_tx_set: None,
+            #[cfg(feature = "imazen")]
+            override_num_modes_rdo: None,
+            #[cfg(feature = "imazen")]
+            override_non_square_max_px: None,
+            #[cfg(feature = "imazen")]
+            override_prune: None,
             palette_mode: None,
             #[cfg(feature = "imazen")]
             enable_trellis: false,
@@ -892,6 +928,28 @@ impl<'exif_slice> Encoder<'exif_slice> {
         self.override_lrf = params.lrf;
         self.override_fast_deblock = params.fast_deblock;
         self.override_sb_q_scale = params.sb_q_scale;
+        self.override_rdo_tx_size = params.rdo_tx_size_override;
+        self.override_rdo_tx_size_depth = params.rdo_tx_size_depth;
+        self.override_rdo_tx_type = params.rdo_tx_type_override;
+        self.override_reduced_tx_set = params.reduced_tx_set;
+        self.override_num_modes_rdo = params.num_modes_rdo_override;
+        self.override_non_square_max_px = params.non_square_partition_max_threshold;
+        // The prune quartet overrides as a UNIT (a None inside the unit
+        // clears that gate) — see expert::InternalParams::prune_none_breakout.
+        self.override_prune = if params.prune_none_breakout.is_some()
+            || params.prune_rect_margin.is_some()
+            || params.prune_four_way_margin.is_some()
+            || params.prune_homogeneity_gate.is_some()
+        {
+            Some((
+                params.prune_none_breakout,
+                params.prune_rect_margin,
+                params.prune_four_way_margin,
+                params.prune_homogeneity_gate,
+            ))
+        } else {
+            None
+        };
         self
     }
 
@@ -1293,6 +1351,16 @@ impl Encoder<'_> {
             }
             if let Some(v) = self.override_lrf { speed.lrf = Some(v); }
             if let Some(v) = self.override_fast_deblock { speed.fast_deblock = Some(v); }
+            apply_fast_tier_overrides(
+                &mut speed,
+                self.override_rdo_tx_size,
+                self.override_rdo_tx_size_depth,
+                self.override_rdo_tx_type,
+                self.override_reduced_tx_set,
+                self.override_num_modes_rdo,
+                self.override_non_square_max_px,
+                self.override_prune,
+            );
         }
         if self.palette_mode.is_some() {
             speed.palette = self.palette_mode;
@@ -1533,6 +1601,16 @@ impl Encoder<'_> {
         let override_fast_deblock = self.override_fast_deblock;
         #[cfg(feature = "imazen")]
         let override_sb_q_scale = self.override_sb_q_scale.clone();
+        #[cfg(feature = "imazen")]
+        let fast_tier_overrides = (
+            self.override_rdo_tx_size,
+            self.override_rdo_tx_size_depth,
+            self.override_rdo_tx_type,
+            self.override_reduced_tx_set,
+            self.override_num_modes_rdo,
+            self.override_non_square_max_px,
+            self.override_prune,
+        );
         let palette_mode = self.palette_mode;
         let encode_color = move || {
             #[cfg_attr(not(feature = "imazen"), allow(unused_mut))]
@@ -1553,6 +1631,10 @@ impl Encoder<'_> {
                 }
                 if let Some(v) = override_lrf { speed.lrf = Some(v); }
                 if let Some(v) = override_fast_deblock { speed.fast_deblock = Some(v); }
+                let (ts, tsd, tt, rts, nm, nsq, prune) = fast_tier_overrides;
+                apply_fast_tier_overrides(
+                    &mut speed, ts, tsd, tt, rts, nm, nsq, prune,
+                );
             }
             if palette_mode.is_some() {
                 speed.palette = palette_mode;
@@ -1885,6 +1967,12 @@ pub(crate) struct SpeedTweaks {
     // dead_code: same release-gating as mixed_3way_partitions above.
     #[allow(dead_code)]
     pub rdo_tx_size_depth: Option<u8>,
+    /// Decoupled intra tx-TYPE RDO (zenrav1e `rdo_tx_type_override`): the
+    /// type-search half of the P0 decomposition, standalone
+    /// butteraugli-max-vetoed but paired with `reduced_tx_set` it is the
+    /// TxBudget::Min head's arm. `None` everywhere in the preset — only the
+    /// expert passthrough sets it.
+    pub rdo_tx_type_override: Option<bool>,
     /// P1 partition-pruning arm (zenrav1e `topdown_prune`, P1PART
     /// 2026-07-04): NONE-first top-down candidate walk + the opt-in gates
     /// below, used to keep HORZ/VERT partitions affordable at fast tiers
@@ -2211,6 +2299,9 @@ impl SpeedTweaks {
             } else {
                 None
             },
+            // Expert-passthrough-only (TxBudget::Min pairs it with
+            // reduced_tx_set); never set by the preset.
+            rdo_tx_type_override: None,
             // s4-s8 keep HORZ/VERT live (rect threshold 16×16, gated above)
             // under the NONE-first topdown_prune walk with the measured
             // gate triple: skip-gated none_breakout τ=1.0, 16-parent
@@ -2312,6 +2403,7 @@ impl SpeedTweaks {
         if let Some(v) = self.split_trial_depth { speed_settings.partition.split_trial_depth = v; }
         if let Some(v) = self.rdo_tx_size_override { speed_settings.transform.rdo_tx_size_override = Some(v); }
         if let Some(v) = self.rdo_tx_size_depth { speed_settings.transform.rdo_tx_size_depth = Some(v); }
+        if let Some(v) = self.rdo_tx_type_override { speed_settings.transform.rdo_tx_type_override = Some(v); }
         if let Some(v) = self.num_modes_rdo_override { speed_settings.prediction.num_modes_rdo_override = Some(v); }
         if self.prune_none_breakout.is_some() || self.prune_rect_margin.is_some()
             || self.prune_four_way_margin.is_some() || self.prune_homogeneity_gate.is_some()
@@ -2325,6 +2417,62 @@ impl SpeedTweaks {
         }
 
         speed_settings
+    }
+}
+
+/// The topdown-prune gate quartet (breakout, rect margin, 4-way margin,
+/// homogeneity vargate) overriding as a unit — see
+/// `expert::InternalParams::prune_none_breakout`.
+#[cfg(feature = "imazen")]
+type PruneQuartet = (Option<f32>, Option<f32>, Option<f32>, Option<f32>);
+
+/// Apply the fast-tier expert overrides onto a `SpeedTweaks` value (shared by
+/// the gray and color encode paths; the alpha stream never receives them).
+/// The prune quartet replaces the preset's gates AS A UNIT (see
+/// `expert::InternalParams::prune_none_breakout`).
+#[cfg(feature = "imazen")]
+#[allow(clippy::too_many_arguments)]
+fn apply_fast_tier_overrides(
+    speed: &mut SpeedTweaks,
+    rdo_tx_size: Option<bool>,
+    rdo_tx_size_depth: Option<u8>,
+    rdo_tx_type: Option<bool>,
+    reduced_tx_set: Option<bool>,
+    num_modes_rdo: Option<u8>,
+    non_square_max_px: Option<u8>,
+    prune: Option<PruneQuartet>,
+) {
+    if rdo_tx_size.is_some() {
+        speed.rdo_tx_size_override = rdo_tx_size;
+    }
+    if rdo_tx_size_depth.is_some() {
+        speed.rdo_tx_size_depth = rdo_tx_size_depth;
+    }
+    if rdo_tx_type.is_some() {
+        speed.rdo_tx_type_override = rdo_tx_type;
+    }
+    if let Some(v) = reduced_tx_set {
+        speed.reduced_tx_set = Some(v);
+    }
+    if num_modes_rdo.is_some() {
+        speed.num_modes_rdo_override = num_modes_rdo;
+    }
+    if let Some(px) = non_square_max_px {
+        speed.non_square_partition_max_threshold = Some(match px {
+            4 => BlockSize::BLOCK_4X4,
+            8 => BlockSize::BLOCK_8X8,
+            16 => BlockSize::BLOCK_16X16,
+            32 => BlockSize::BLOCK_32X32,
+            64 => BlockSize::BLOCK_64X64,
+            128 => BlockSize::BLOCK_128X128,
+            _ => panic!("bad non_square_partition_max_threshold {px}"),
+        });
+    }
+    if let Some((bk, rect, four_way, vg)) = prune {
+        speed.prune_none_breakout = bk;
+        speed.prune_rect_margin = rect;
+        speed.prune_four_way_margin = four_way;
+        speed.prune_homogeneity_gate = vg;
     }
 }
 
