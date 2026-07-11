@@ -1315,6 +1315,7 @@ impl Encoder<'_> {
                 // as they do to the color path's luma.
                 #[cfg(feature = "imazen")]
                 frame_hints_sb_q_scale: self.override_sb_q_scale.clone(),
+                is_alpha: false,
                 max_pixels: self.max_pixels,
                 #[cfg(feature = "stop")]
                 stop_token: self.stop_token.clone(),
@@ -1566,6 +1567,7 @@ impl Encoder<'_> {
                     enable_trellis: self.enable_trellis,
                     #[cfg(feature = "imazen")]
                     frame_hints_sb_q_scale: override_sb_q_scale,
+                    is_alpha: false,
                     max_pixels: self.max_pixels,
                     #[cfg(feature = "stop")]
                     stop_token: self.stop_token.clone(),
@@ -1618,6 +1620,7 @@ impl Encoder<'_> {
                         // encode never receives the map.
                         #[cfg(feature = "imazen")]
                         frame_hints_sb_q_scale: None,
+                        is_alpha: true,
                         max_pixels: self.max_pixels,
                         #[cfg(feature = "stop")]
                         stop_token: self.stop_token.clone(),
@@ -1895,7 +1898,7 @@ impl SpeedTweaks {
     /// estimate. While false, `from_my_preset` output is byte-identical to
     /// the pre-s1 table at every speed. Flip at the dep bump and uncomment
     /// the two apply lines in `speed_settings()` (see zenrav1e#27).
-    const S1_DEEP_ARMS_LIVE: bool = false;
+    const S1_DEEP_ARMS_LIVE: bool = true;
 
     /// Master switch for the s6-s8 depth-1 tx-size RDO arms (FASTWINS P0,
     /// FAST_TIER_PARITY_PLAN; zenavif benchmarks/rd_gap_fastwins_2026-07-04
@@ -1917,7 +1920,7 @@ impl SpeedTweaks {
     /// that release); while false, `from_my_preset` output is
     /// byte-identical at every speed. Flip at the dep bump and uncomment
     /// the two apply lines in `speed_settings()`.
-    const S6_TX_SIZE_RDO_LIVE: bool = false;
+    const S6_TX_SIZE_RDO_LIVE: bool = true;
 
     /// Master switch for the s4-s8 rect-partition liveness arms (P1PART
     /// 2026-07-04, FAST_TIER_PARITY_PLAN P1 lever 1; zenavif
@@ -1958,7 +1961,7 @@ impl SpeedTweaks {
     /// every speed (the 16×16 threshold value is ALSO gated: it is live in
     /// bottom-up edge-superblock coding even on registry builds). Flip at
     /// the dep bump and uncomment the apply block in `speed_settings()`.
-    const S6_PART_PRUNE_LIVE: bool = false;
+    const S6_PART_PRUNE_LIVE: bool = true;
 
     /// Master switch for the s6-s8 top-7 keyframe intra RDO arm (P2HEADS
     /// 2026-07-04, FAST_TIER_PARITY_PLAN P2 head-3 axis; zenavif
@@ -1980,7 +1983,7 @@ impl SpeedTweaks {
     /// re-opens zenrav1e#5); while false, byte-identical at every speed.
     /// Flip at the dep bump and uncomment the apply block in
     /// `speed_settings()`.
-    const S6_INTRA7_LIVE: bool = false;
+    const S6_INTRA7_LIVE: bool = true;
 
     /// Small-rendition effort mode (zenavif size-decay non-tune A/B,
     /// 2026-07-03): keep tx-size/type RDO ON at high quality when the frame's
@@ -2037,7 +2040,7 @@ impl SpeedTweaks {
     /// and uncomment the num_modes_rdo apply line in `speed_settings()`.
     /// Alpha-channel caveat: these rows also govern the alpha (Cs400)
     /// encode; the corpus carries no alpha — cost impact there unmeasured.
-    const S10_RETIER_LIVE: bool = false;
+    const S10_RETIER_LIVE: bool = true;
 
     pub fn from_my_preset(speed: u8, quantizer: u8, long_edge: usize) -> Self {
         // Use fixed quantizer thresholds instead of quality_to_quantizer()
@@ -2248,12 +2251,12 @@ impl SpeedTweaks {
         if let Some(v) = self.use_satd_subpel { speed_settings.motion.use_satd_subpel = v; }
         if let Some(v) = self.fine_directional_intra { speed_settings.prediction.fine_directional_intra = v; }
         if let Some(v) = self.complex_prediction_modes { speed_settings.prediction.prediction_modes = if v { PredictionModesSetting::ComplexAll } else { PredictionModesSetting::Simple} }
-        // UNCOMMENT at the zenrav1e dep bump (the filter_intra override lands post-0.1.4; see S6_INTRA7_LIVE).
+        // Uncommented on the cooptloop branch (zenrav1e path dep supplies the knob).
         // Must stay AFTER the complex_prediction_modes apply (it refines the forced-Simple guard):
-        // if self.intra_top7 == Some(true) {
-        //     speed_settings.prediction.prediction_modes = PredictionModesSetting::ComplexKeyframes;
-        //     speed_settings.prediction.filter_intra = Some(false);
-        // }
+        if self.intra_top7 == Some(true) {
+            speed_settings.prediction.prediction_modes = PredictionModesSetting::ComplexKeyframes;
+            speed_settings.prediction.filter_intra = Some(false);
+        }
         if let Some((min, max)) = self.partition_range {
             debug_assert!(min <= max);
             fn sz(s: u8) -> BlockSize {
@@ -2272,27 +2275,22 @@ impl SpeedTweaks {
         if let Some(v) = self.segmentation { speed_settings.segmentation = v; }
         if let Some(v) = self.lru_on_skip { speed_settings.lru_on_skip = v; }
         if let Some(v) = self.non_square_partition_max_threshold { speed_settings.partition.non_square_partition_max_threshold = v; }
-        // UNCOMMENT at the zenrav1e dep bump (knob lands post-0.1.4; see S1_DEEP_ARMS_LIVE):
-        // if let Some(v) = self.mixed_3way_partitions { speed_settings.partition.mixed_3way_partitions = v; }
-        // UNCOMMENT at the zenrav1e dep bump (knob lands post-0.1.4; see S1_DEEP_ARMS_LIVE):
-        // if let Some(v) = self.split_trial_depth { speed_settings.partition.split_trial_depth = v; }
-        // UNCOMMENT at the zenrav1e dep bump (knobs land post-0.1.4; see S6_TX_SIZE_RDO_LIVE):
-        // if let Some(v) = self.rdo_tx_size_override { speed_settings.transform.rdo_tx_size_override = Some(v); }
-        // UNCOMMENT at the zenrav1e dep bump (knobs land post-0.1.4; see S6_TX_SIZE_RDO_LIVE):
-        // if let Some(v) = self.rdo_tx_size_depth { speed_settings.transform.rdo_tx_size_depth = Some(v); }
-        // UNCOMMENT at the zenrav1e dep bump (knob lands post-0.1.4; see S10_RETIER_LIVE):
-        // if let Some(v) = self.num_modes_rdo_override { speed_settings.prediction.num_modes_rdo_override = Some(v); }
-        // UNCOMMENT at the zenrav1e dep bump (knob lands post-0.1.4; see S6_PART_PRUNE_LIVE):
-        // if self.prune_none_breakout.is_some() || self.prune_rect_margin.is_some()
-        //     || self.prune_four_way_margin.is_some() || self.prune_homogeneity_gate.is_some()
-        // {
-        //     speed_settings.partition.topdown_prune = Some(TopdownPartitionPrune {
-        //         none_breakout: self.prune_none_breakout,
-        //         rect_margin: self.prune_rect_margin,
-        //         four_way_margin: self.prune_four_way_margin,
-        //         homogeneity_gate: self.prune_homogeneity_gate,
-        //     });
-        // }
+        // Uncommented on the cooptloop branch (zenrav1e path dep supplies the knobs):
+        if let Some(v) = self.mixed_3way_partitions { speed_settings.partition.mixed_3way_partitions = v; }
+        if let Some(v) = self.split_trial_depth { speed_settings.partition.split_trial_depth = v; }
+        if let Some(v) = self.rdo_tx_size_override { speed_settings.transform.rdo_tx_size_override = Some(v); }
+        if let Some(v) = self.rdo_tx_size_depth { speed_settings.transform.rdo_tx_size_depth = Some(v); }
+        if let Some(v) = self.num_modes_rdo_override { speed_settings.prediction.num_modes_rdo_override = Some(v); }
+        if self.prune_none_breakout.is_some() || self.prune_rect_margin.is_some()
+            || self.prune_four_way_margin.is_some() || self.prune_homogeneity_gate.is_some()
+        {
+            speed_settings.partition.topdown_prune = Some(TopdownPartitionPrune {
+                none_breakout: self.prune_none_breakout,
+                rect_margin: self.prune_rect_margin,
+                four_way_margin: self.prune_four_way_margin,
+                homogeneity_gate: self.prune_homogeneity_gate,
+            });
+        }
 
         speed_settings
     }
@@ -2338,6 +2336,11 @@ struct Av1EncodeConfig {
     /// `FrameHints::sb_q_scale` (release-gated: see [`FRAME_HINTS_LIVE`]).
     #[cfg(feature = "imazen")]
     pub frame_hints_sb_q_scale: Option<Box<[f32]>>,
+    /// True only for the ALPHA plane's AV1 stream. Perceptual tunes measurably
+    /// ring on alpha (libavif's finding; its alpha is pinned to tune=psnr) —
+    /// this flag pins the alpha stream to `Tune::Psnr` while color/gray keep
+    /// the perceptual still-image tune.
+    pub is_alpha: bool,
     /// Forwarded to zenrav1e's `max_pixel_count` guard. `0` = unlimited.
     pub max_pixels: u64,
     #[cfg(feature = "stop")]
@@ -2422,10 +2425,20 @@ fn rav1e_config(p: &Av1EncodeConfig) -> Config {
         },
         bitrate: 0,
         tune: {
-            #[cfg(feature = "imazen")]
-            { if p.tune_still_image { Tune::StillImage } else { Tune::Psychovisual } }
-            #[cfg(not(feature = "imazen"))]
-            { Tune::Psychovisual }
+            // cooptloop branch (the flip's tune-default decision): still-image
+            // color/gray default to Tune::Ssimulacra2 — the composed tune every
+            // ladder measurement was made with (RD_GAP "CURRENT POSITION").
+            // Alpha is pinned to Tune::Psnr (perceptual tunes ring on alpha —
+            // libavif's measured finding; it pins alpha to tune=psnr).
+            // `tune_still_image` keeps its explicit StillImage override.
+            if p.is_alpha {
+                Tune::Psnr
+            } else {
+                #[cfg(feature = "imazen")]
+                { if p.tune_still_image { Tune::StillImage } else { Tune::Ssimulacra2 } }
+                #[cfg(not(feature = "imazen"))]
+                { Tune::Ssimulacra2 }
+            }
         },
         tile_cols: 0,
         tile_rows: 0,
@@ -2467,6 +2480,10 @@ fn rav1e_config(p: &Av1EncodeConfig) -> Config {
         // matching zenrav1e's `max_pixel_count > 0` convention.
         max_pixel_count: p.max_pixels,
         speed_settings,
+        // cooptloop branch: zenrav1e master knobs beyond the 0.1.4 literal
+        // (coeff_rd_stack, ssim_rdmult_strength, quant_rounding_bias, variance
+        // boost overrides, ...) — all default-inert (the measured-off values).
+        ..Default::default()
     });
 
     if let Some(threads) = p.threads {
@@ -2684,7 +2701,7 @@ fn init_frame_1<P: zenrav1e::Pixel + Default>(
 /// dep bump: flip to `true` and uncomment the hinted-send block in
 /// `encode_to_av1`.
 #[cfg(feature = "imazen")]
-pub const FRAME_HINTS_LIVE: bool = false;
+pub const FRAME_HINTS_LIVE: bool = true;
 
 #[inline(never)]
 fn encode_to_av1<P: zenrav1e::Pixel>(
@@ -2730,24 +2747,27 @@ fn encode_to_av1<P: zenrav1e::Pixel>(
     // `send_frame` returns a bare `EncoderStatus`; convert it (preserving the
     // rav1e reason) and trace it at this boundary.
     //
-    // Per-SB quantizer-scale hints (closed-loop second pass). RELEASE-GATED:
-    // the `FrameParameters.frame_hints` field + `FrameHints` type need
-    // zenrav1e > 0.1.4 (master `c4047cec`). At the dep bump: flip
-    // `FRAME_HINTS_LIVE` to true and swap the plain send below for the
-    // commented hinted send.
+    // Per-SB quantizer-scale hints (closed-loop second pass). Armed on the
+    // cooptloop branch (zenrav1e path dep supplies `FrameParameters.frame_hints`
+    // + `FrameHints`, master `c4047cec`): the hinted send replaces the plain
+    // send whenever a hint map is present.
     #[cfg(feature = "imazen")]
-    if FRAME_HINTS_LIVE && p.frame_hints_sb_q_scale.is_some() {
-        // let hints = FrameHints::new()
-        //     .with_sb_q_scale(p.frame_hints_sb_q_scale.clone().unwrap());
-        // let params = FrameParameters {
-        //     frame_hints: Some(std::sync::Arc::new(hints)),
-        //     ..Default::default()
-        // };
-        // ctx.send_frame((std::sync::Arc::new(frame), params))
-        //     .map_err(|e| at!(Error::from(e)))?;
-        unreachable!("FRAME_HINTS_LIVE requires the zenrav1e dep bump (uncomment the hinted send)");
+    let hint_map: Option<Box<[f32]>> =
+        if FRAME_HINTS_LIVE { p.frame_hints_sb_q_scale.clone() } else { None };
+    #[cfg(not(feature = "imazen"))]
+    let hint_map: Option<Box<[f32]>> = None;
+    if let Some(map) = hint_map {
+        let params = FrameParameters {
+            frame_hints: Some(std::sync::Arc::new(
+                FrameHints::new().with_sb_q_scale(map),
+            )),
+            ..Default::default()
+        };
+        ctx.send_frame((std::sync::Arc::new(frame), params))
+            .map_err(|e| at!(Error::from(e)))?;
+    } else {
+        ctx.send_frame(frame).map_err(|e| at!(Error::from(e)))?;
     }
-    ctx.send_frame(frame).map_err(|e| at!(Error::from(e)))?;
     ctx.flush();
 
     let mut out = Vec::new();
