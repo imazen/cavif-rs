@@ -2421,7 +2421,19 @@ fn rav1e_config(p: &Av1EncodeConfig) -> Config {
         (px / TILE_RD_MIN_AREA)
             .min(px / (p.speed.min_tile_size as usize).pow(2))
     };
-    let speed_settings = p.speed.speed_settings();
+    #[cfg_attr(not(feature = "imazen"), allow(unused_mut))]
+    let mut speed_settings = p.speed.speed_settings();
+    // The s6-s9 decoupled tx-size RDO arm (S6_TX_SIZE_RDO_LIVE / S10_RETIER's
+    // s9 row) was measured on 8-bit SDR corpora only. On 10-bit content it
+    // regresses the PQ10 pixel-fidelity envelope (zenavif
+    // tests/hdr_roundtrip.rs: q95/s8 max |Δ| 647 → 1025 16-bit units,
+    // bisected 2026-07-10 — tune exonerated, intra7/part-prune clean).
+    // Restrict the arm to its measured domain until a 10/12-bit re-measure
+    // earns it there.
+    if p.bit_depth > 8 {
+        speed_settings.transform.rdo_tx_size_override = None;
+        speed_settings.transform.rdo_tx_size_depth = None;
+    }
     let cfg = Config::new()
         .with_encoder_config(EncoderConfig {
         width: p.width,
