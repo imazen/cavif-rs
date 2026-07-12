@@ -2159,6 +2159,14 @@ impl SpeedTweaks {
     const S10_RETIER_LIVE: bool = true;
 
     pub fn from_my_preset(speed: u8, quantizer: u8, long_edge: usize) -> Self {
+        // Q3 (cooptloop, G2 round 1): on the ARMED table speeds 7 and 8
+        // produced byte-identical configs (144/144 train26 cells) that were
+        // strictly dominated by s6 — +3.31% mass ssim2 BD, butteraugli-
+        // vetoed, at 1.26x s6's wall (zenavif benchmarks/
+        // g2_armed_ladder_2026-07-12.meta). Alias them to s6's row: faster
+        // AND better than what they produced; the dead rungs disappear at
+        // the source. Re-derive real 7/8 budget points in Phase 4.
+        let speed = if (7..=8).contains(&speed) { 6 } else { speed };
         // Use fixed quantizer thresholds instead of quality_to_quantizer()
         // so these don't shift when the quality curve changes
         let low_quality = quantizer > 150;  // ~Q50 and below
