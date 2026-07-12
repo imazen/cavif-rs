@@ -2398,6 +2398,52 @@ impl SpeedTweaks {
         if let Some(v) = self.lru_on_skip { speed_settings.lru_on_skip = v; }
         if let Some(v) = self.non_square_partition_max_threshold { speed_settings.partition.non_square_partition_max_threshold = v; }
         if let Some(v) = self.palette { speed_settings.prediction.palette = v; }
+        // DEV-ONLY (cooptloop Q2 hole-sweep): env-gated grafts of s6-bundle
+        // members onto faster presets, for run_gap-driven candidate arms.
+        // Unset env = byte-identical. Never lands beyond the branch.
+        match std::env::var("ZENRAVIF_Q2_GRAFT").as_deref() {
+            Ok("i7") => {
+                speed_settings.prediction.prediction_modes =
+                    PredictionModesSetting::ComplexKeyframes;
+                speed_settings.prediction.filter_intra = Some(false);
+            }
+            Ok("prune") => {
+                speed_settings.partition.non_square_partition_max_threshold =
+                    BlockSize::BLOCK_16X16;
+                speed_settings.partition.topdown_prune =
+                    Some(TopdownPartitionPrune {
+                        none_breakout: Some(1.0),
+                        rect_margin: None,
+                        four_way_margin: Some(0.0),
+                        homogeneity_gate: Some(2.0),
+                    });
+            }
+            Ok("txd2") => {
+                speed_settings.transform.rdo_tx_size_override = Some(true);
+                speed_settings.transform.rdo_tx_size_depth = Some(2);
+            }
+            Ok("txmin") => {
+                speed_settings.transform.rdo_tx_size_override = Some(true);
+                speed_settings.transform.rdo_tx_size_depth = Some(1);
+                speed_settings.transform.rdo_tx_type_override = Some(true);
+                speed_settings.transform.reduced_tx_set = true;
+            }
+            Ok("i7prune") => {
+                speed_settings.prediction.prediction_modes =
+                    PredictionModesSetting::ComplexKeyframes;
+                speed_settings.prediction.filter_intra = Some(false);
+                speed_settings.partition.non_square_partition_max_threshold =
+                    BlockSize::BLOCK_16X16;
+                speed_settings.partition.topdown_prune =
+                    Some(TopdownPartitionPrune {
+                        none_breakout: Some(1.0),
+                        rect_margin: None,
+                        four_way_margin: Some(0.0),
+                        homogeneity_gate: Some(2.0),
+                    });
+            }
+            _ => {}
+        }
         // Uncommented on the cooptloop branch (zenrav1e path dep supplies the knobs):
         if let Some(v) = self.mixed_3way_partitions { speed_settings.partition.mixed_3way_partitions = v; }
         if let Some(v) = self.split_trial_depth { speed_settings.partition.split_trial_depth = v; }
