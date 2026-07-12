@@ -2406,8 +2406,29 @@ impl SpeedTweaks {
         if let Some(v) = self.lru_on_skip { speed_settings.lru_on_skip = v; }
         if let Some(v) = self.non_square_partition_max_threshold { speed_settings.partition.non_square_partition_max_threshold = v; }
         if let Some(v) = self.palette { speed_settings.prediction.palette = v; }
+        // Uncommented on the cooptloop branch (zenrav1e path dep supplies the knobs):
+        if let Some(v) = self.mixed_3way_partitions { speed_settings.partition.mixed_3way_partitions = v; }
+        if let Some(v) = self.split_trial_depth { speed_settings.partition.split_trial_depth = v; }
+        if let Some(v) = self.rdo_tx_size_override { speed_settings.transform.rdo_tx_size_override = Some(v); }
+        if let Some(v) = self.rdo_tx_size_depth { speed_settings.transform.rdo_tx_size_depth = Some(v); }
+        if let Some(v) = self.rdo_tx_type_override { speed_settings.transform.rdo_tx_type_override = Some(v); }
+        if let Some(v) = self.num_modes_rdo_override { speed_settings.prediction.num_modes_rdo_override = Some(v); }
+        if self.prune_none_breakout.is_some() || self.prune_rect_margin.is_some()
+            || self.prune_four_way_margin.is_some() || self.prune_homogeneity_gate.is_some()
+        {
+            speed_settings.partition.topdown_prune = Some(TopdownPartitionPrune {
+                none_breakout: self.prune_none_breakout,
+                rect_margin: self.prune_rect_margin,
+                four_way_margin: self.prune_four_way_margin,
+                homogeneity_gate: self.prune_homogeneity_gate,
+            });
+        }
+
         // DEV-ONLY (cooptloop Q2 hole-sweep): env-gated grafts of s6-bundle
-        // members onto faster presets, for run_gap-driven candidate arms.
+        // members onto faster presets. MUST run LAST (after the expert-override
+        // block): the armed-tier expert knobs (size1/SATD/prune) otherwise clobber
+        // the graft fields — found 2026-07-12 when txd2 measured byte-identical
+        // to base (registered arm never actually ran).
         // Unset env = byte-identical. Never lands beyond the branch.
         match std::env::var("ZENRAVIF_Q2_GRAFT").as_deref() {
             Ok("i7") => {
@@ -2451,23 +2472,6 @@ impl SpeedTweaks {
                     });
             }
             _ => {}
-        }
-        // Uncommented on the cooptloop branch (zenrav1e path dep supplies the knobs):
-        if let Some(v) = self.mixed_3way_partitions { speed_settings.partition.mixed_3way_partitions = v; }
-        if let Some(v) = self.split_trial_depth { speed_settings.partition.split_trial_depth = v; }
-        if let Some(v) = self.rdo_tx_size_override { speed_settings.transform.rdo_tx_size_override = Some(v); }
-        if let Some(v) = self.rdo_tx_size_depth { speed_settings.transform.rdo_tx_size_depth = Some(v); }
-        if let Some(v) = self.rdo_tx_type_override { speed_settings.transform.rdo_tx_type_override = Some(v); }
-        if let Some(v) = self.num_modes_rdo_override { speed_settings.prediction.num_modes_rdo_override = Some(v); }
-        if self.prune_none_breakout.is_some() || self.prune_rect_margin.is_some()
-            || self.prune_four_way_margin.is_some() || self.prune_homogeneity_gate.is_some()
-        {
-            speed_settings.partition.topdown_prune = Some(TopdownPartitionPrune {
-                none_breakout: self.prune_none_breakout,
-                rect_margin: self.prune_rect_margin,
-                four_way_margin: self.prune_four_way_margin,
-                homogeneity_gate: self.prune_homogeneity_gate,
-            });
         }
 
         speed_settings
