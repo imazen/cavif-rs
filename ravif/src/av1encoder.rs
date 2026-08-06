@@ -2346,7 +2346,7 @@ struct Av1EncodeConfig {
     #[cfg(feature = "imazen")]
     pub enable_trellis: bool,
     /// Per-superblock AC quantizer scale map forwarded to zenrav1e as
-    /// `FrameHints::sb_q_scale` (release-gated: see [`FRAME_HINTS_LIVE`]).
+    /// `FrameHints::sb_q_scale` (live — see [`FRAME_HINTS_LIVE`]).
     #[cfg(feature = "imazen")]
     pub frame_hints_sb_q_scale: Option<Box<[f32]>>,
     /// Forwarded to zenrav1e's `max_pixel_count` guard. `0` = unlimited.
