@@ -331,6 +331,11 @@ fn encode_sequence_av1<P: Pixel + Default>(
         enable_trellis: false,
         max_pixel_count: enc.max_pixels,
         speed_settings: speed.speed_settings(),
+        // zenrav1e master added knobs after 0.1.4 (coeff_rd_stack,
+        // quant_rounding_bias, ssim_rdmult_strength, ...). Take their
+        // defaults rather than pinning values here: this crate has not
+        // measured them, and a guessed value would silently change RD.
+        ..Default::default()
     };
 
     let cfg = Config::new().with_encoder_config(config);
@@ -442,6 +447,11 @@ fn make_sequence_header<P: Pixel + Default>(
         enable_trellis: false,
         max_pixel_count: enc.max_pixels,
         speed_settings: speed.speed_settings(),
+        // zenrav1e master added knobs after 0.1.4 (coeff_rd_stack,
+        // quant_rounding_bias, ssim_rdmult_strength, ...). Take their
+        // defaults rather than pinning values here: this crate has not
+        // measured them, and a guessed value would silently change RD.
+        ..Default::default()
     };
     let cfg = Config::new().with_encoder_config(config);
     // TODO(whereat): when this crate bumps to zenrav1e ^0.2.0 (which returns

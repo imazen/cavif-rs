@@ -2467,6 +2467,11 @@ fn rav1e_config(p: &Av1EncodeConfig) -> Config {
         // matching zenrav1e's `max_pixel_count > 0` convention.
         max_pixel_count: p.max_pixels,
         speed_settings,
+        // zenrav1e master added knobs after 0.1.4 (coeff_rd_stack,
+        // quant_rounding_bias, ssim_rdmult_strength, ...). Take their
+        // defaults rather than pinning values here: this crate has not
+        // measured them, and a guessed value would silently change RD.
+        ..Default::default()
     });
 
     if let Some(threads) = p.threads {
@@ -2684,7 +2689,7 @@ fn init_frame_1<P: zenrav1e::Pixel + Default>(
 /// dep bump: flip to `true` and uncomment the hinted-send block in
 /// `encode_to_av1`.
 #[cfg(feature = "imazen")]
-pub const FRAME_HINTS_LIVE: bool = false;
+pub const FRAME_HINTS_LIVE: bool = true;
 
 #[inline(never)]
 fn encode_to_av1<P: zenrav1e::Pixel>(
@@ -2736,17 +2741,20 @@ fn encode_to_av1<P: zenrav1e::Pixel>(
     // `FRAME_HINTS_LIVE` to true and swap the plain send below for the
     // commented hinted send.
     #[cfg(feature = "imazen")]
-    if FRAME_HINTS_LIVE && p.frame_hints_sb_q_scale.is_some() {
-        // let hints = FrameHints::new()
-        //     .with_sb_q_scale(p.frame_hints_sb_q_scale.clone().unwrap());
-        // let params = FrameParameters {
-        //     frame_hints: Some(std::sync::Arc::new(hints)),
-        //     ..Default::default()
-        // };
-        // ctx.send_frame((std::sync::Arc::new(frame), params))
-        //     .map_err(|e| at!(Error::from(e)))?;
-        unreachable!("FRAME_HINTS_LIVE requires the zenrav1e dep bump (uncomment the hinted send)");
+    if FRAME_HINTS_LIVE
+        && let Some(sb_q_scale) = p.frame_hints_sb_q_scale.clone()
+    {
+        let hints = zenrav1e::prelude::FrameHints::new().with_sb_q_scale(sb_q_scale);
+        let params = zenrav1e::prelude::FrameParameters {
+            frame_hints: Some(std::sync::Arc::new(hints)),
+            ..Default::default()
+        };
+        ctx.send_frame((std::sync::Arc::new(frame), params))
+            .map_err(|e| at!(Error::from(e)))?;
+    } else {
+        ctx.send_frame(frame).map_err(|e| at!(Error::from(e)))?;
     }
+    #[cfg(not(feature = "imazen"))]
     ctx.send_frame(frame).map_err(|e| at!(Error::from(e)))?;
     ctx.flush();
 

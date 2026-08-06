@@ -16,7 +16,18 @@ rust-version = "1.93"
 [dependencies]
 zenavif-serialize = { version = "0.2.0" }  # set_gain_map_alt_icc; supplied by [patch.crates-io] until 0.2.0 publishes
 imgref = "1.12.0"
-zenrav1e = { version = "0.1.4", default-features = false }
+# DEV: sibling checkout (master, 0.2.0) rather than registry 0.1.4, because
+# 0.1.4 has no `FrameHints` / `FrameParameters.frame_hints` — the sole reason
+# `FRAME_HINTS_LIVE` was hard-false, which made supplied per-SB diffmap maps
+# accepted-then-discarded. A [patch.crates-io] CANNOT do this: it only
+# substitutes a package whose version satisfies the existing requirement, and
+# 0.2.0 does not satisfy "0.1.4".
+#
+# NOT a diffmap-only change: master carries default-ON partition/split-cost RD
+# fixes, so encoded BYTES move vs 0.1.4 across the board. Anything fitted
+# against 0.1.4 must be re-measured. Return to a registry dep at the release
+# past 0.1.4.
+zenrav1e = { path = "../../zenrav1e", default-features = false }
 rayon = { version = "1.11.0", optional = true }
 rgb = { version = "0.8", default-features = false }
 loop9 = "0.1.5"
@@ -25,7 +36,7 @@ whereat = "0.1.5"
 almost-enough = { version = "0.4.3", optional = true, default-features = false, features = ["alloc"] }
 
 [target.'cfg(target = "wasm32-unknown-unknown")'.dependencies]
-zenrav1e = { version = "0.1.4", default-features = false, features = ["wasm"] }
+zenrav1e = { path = "../../zenrav1e", default-features = false, features = ["wasm"] }
 
 [features]
 default = ["asm", "threading"]
