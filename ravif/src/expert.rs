@@ -248,11 +248,12 @@ pub struct InternalParams {
     /// with a perceptual metric, pool the per-pixel error map per
     /// superblock, and re-encode with the worst superblocks boosted.
     ///
-    /// **Release gate:** requires zenrav1e's unreleased `FrameHints`
-    /// input (master `c4047cec`). Until the zenrav1e dep bumps past
-    /// 0.1.4 the map is accepted but **not applied** (encodes are
-    /// byte-identical to `None`); `crate::av1encoder::FRAME_HINTS_LIVE`
-    /// reports whether the passthrough is active so callers can fail
-    /// honestly instead of silently double-encoding.
+    /// **Status:** LIVE. The zenrav1e dep is on master/0.2.0, which carries
+    /// the `FrameHints` input (`c4047cec`), so a supplied map reaches the
+    /// encoder and moves the bitstream (pinned by
+    /// `tests/frame_hints_live.rs`). `crate::av1encoder::FRAME_HINTS_LIVE`
+    /// still reports whether the passthrough is compiled in, so a caller
+    /// built against a zenrav1e without `FrameParameters::frame_hints` can
+    /// fail honestly instead of silently double-encoding.
     pub sb_q_scale: Option<Box<[f32]>>,
 }

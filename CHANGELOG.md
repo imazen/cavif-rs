@@ -6,8 +6,89 @@ encoder by Kornel Lesiński, extended for the zenrav1e fork's still-image work.
 
 ## [Unreleased]
 
+### Changed
+- **The zenrav1e dep-bump release gates are cashed in** (c69050a + this
+  commit). The dep moved to zenrav1e master/0.2.0 in 619d81a, which is the
+  condition four speed-table gates named, so `S1_DEEP_ARMS_LIVE`,
+  `S6_TX_SIZE_RDO_LIVE`, `S6_PART_PRUNE_LIVE` and `S10_RETIER_LIVE` are now
+  `true` **and their apply blocks in `speed_settings()` are uncommented** — a
+  flipped const over a commented apply block is a no-op that looks done, so
+  both halves landed together. Every entry below that says "release-gated",
+  "OFF until the zenrav1e dep bump" or "byte-identical while off" is
+  superseded by this one for those four arms.
+
+  Re-measured as-shipped rather than assumed —
+  `benchmarks/gate_flip_summary_2026-08-06.tsv` (+ the compressed raw cells
+  and the `.meta`). Harness: `examples/gate_sweep.rs` (encode → decode via
+  rav1d-safe → SSIMULACRA2, one row per cell; its q100 cells score exactly
+  100.0000, which pins the decode + full-range BT.601 inverse as exact).
+  Grid: 5 content classes (2 photo, screen, text/UI, line-art/UI) × long-edge
+  {64, 256, 1024, 2048} × quality 5..100 step 5 (step 10 at 2048 and for the
+  s1 rows) × speeds 1-10, ~9,500 encode+score cells. Metric is pareto-front
+  SSIMULACRA2 BD-rate; negative = fewer bytes at matched quality.
+
+  **Shipped 4-arm config vs the pre-flip baseline (main grid, 64/256/1024,
+  s4-s10, n=100 curves): median −2.9% BD-rate**, every speed row negative.
+  All five arms together (i.e. including the still-off intra7 row) measure
+  median −5.4% on that grid and **−9.95% at the 2048 tier** (n=20, no
+  positive cell there). Speed rows carry it unevenly: s4 ≈ −1%, s6-s8 −4 to
+  −11%, s9/s10 −12 to −15% (the S10 re-tier). Content: text/UI and screen
+  gain most (−8 to −34% at 1024), photos least (−0.1 to −6%); the only
+  material regressors anywhere are photo_a at s5 (+6.5% at 256, +1.5% at
+  1024) and photo_a at s6/1024 (+0.5%).
+
+  Honest caveats: (1) the arms were originally fit under
+  `Tune::Ssimulacra2` (+ palette for the S10 rows) and ravif selects
+  NEITHER, so these rows now ship in a configuration the original grids did
+  not cover — that is exactly why they were re-measured tune-off; (2)
+  `S6_PART_PRUNE_LIVE` arms the band 4..=8 but P1PART only ever fit s4, s6
+  and s8 — s5 and s7 ride along, and s5 is the weakest row in the new data
+  (median −2.0%, and the home of both photo regressions); (3) no arm touches
+  per-SB delta-q, Variance Boost, or segmentation (ravif never sets
+  `variance_boost_*` and never selects the ss2 tune), so the
+  delta-q-disables-segmentation step is *not* inside this before/after; (4)
+  the encode-time cost is reported separately in the `.meta` from a solo,
+  un-niced run — the sweep's own `enc_ms` column came from a contended
+  multi-process run and is a ratio at best.
+
+- **`S6_INTRA7_LIVE` stays `false` — measured, positive, blocked on a test
+  premise, NOT on RD.** Isolated on the same grid (4-arm shipped vs 5-arm)
+  it is a win that reproduces its train26 record: **s6 −0.55% median BD
+  (n=14 curves), s7 −1.29% (n=13), s8 −1.29% (n=13)**, with every other
+  speed row byte-identical (100/100 cells — which also proves its apply
+  block is live and bounded to 6..=8). It is off only because arming it
+  changes the s6-s8 *default* prediction-mode setting from forced-`Simple`
+  to `ComplexKeyframes` + `filter_intra=Some(false)`, and two `expert_tests`
+  (`complex_prediction_modes_false_matches_default`,
+  `partition_range_fixed_16_changes_bytes`) assert the old default on a
+  speed-6 fixture. Their premise genuinely changed; fixing them means
+  editing test fixtures, which is a human decision, so the arm waits rather
+  than the tests being weakened. To arm: repoint those two tests at a speed
+  outside the 6..=8 band (assertions unchanged — only the fixture speed),
+  then flip the const.
+
+- **`FRAME_HINTS_LIVE` is `true`** and the hinted `send_frame` is live
+  (619d81a), so `expert::InternalParams::sb_q_scale` now actually reaches
+  zenrav1e as `FrameHints::sb_q_scale`. Pinned by
+  `ravif/tests/frame_hints_live.rs`.
+
+### Fixed
+- **An explicit `InternalParams::complex_prediction_modes` override is no
+  longer clobbered by the speed table's intra_top7 arm.** Exposed by the
+  gate flip: both apply sites (still-image and the alpha/second config path)
+  now disarm `intra_top7` when the caller names that axis. The expert
+  surface owns the axis it names.
+
 ### Added
-- **Re-tiered s9/s10 rows, release-gated** (S10 program, zenavif
+- **`examples/gate_sweep.rs`** — the release-gate A/B harness described
+  above. Root package only (`cavif`, `publish = false`), so its extra
+  dev-dependencies (`rav1d-safe`, `fast-ssim2`, `zenresize`) never reach a
+  published crate. `rav1d-safe` is pinned to a git rev rather than registry
+  0.5.7 because 0.5.7's aarch64 NEON self-guided loop-restoration path
+  panics with an out-of-bounds index decoding our own LRF-on (low-quality)
+  encodes; the 0.6.0-staging rev decodes the same cells cleanly.
+
+- **Re-tiered s9/s10 rows** (S10 program, zenavif
   `docs/S10_PROGRAM.md` + `benchmarks/rd_gap_s10_2026-07-05.tsv`):
   `S10_RETIER_LIVE` const + `SpeedTweaks.num_modes_rdo_override`. The
   JPEG-anchored scoreboard measured the shipped s10 row losing to
@@ -19,11 +100,13 @@ encoder by Kornel Lesiński, extended for the zenrav1e fork's still-image work.
   0.95x its time — strictly better and faster; 4.3x mozjpeg-class encode
   time at 0.69-0.78x its bytes)**; **s9' = s10' + partition floor (8,16) +
   depth-1 tx-size RDO (−15.1/−18.2/−23.6 vs old s9 at 1.62x; 9.0x jpeg-moz
-  at 0.54-0.60x bytes)**. OFF until the zenrav1e dep bump (measured configs
-  include the release-gated ss2 tune + palette; the num_modes_rdo knob is
-  post-0.1.4); byte-identical while off (6/6 md5 gate at s9/s10 ×
-  q30/60/90). Conformance: 0 failures across ~4,000 PALCONF'd cells.
-- **s6-s8 top-7 keyframe intra RDO arm, release-gated** (9e413ac0 message /
+  at 0.54-0.60x bytes)**. NOW LIVE (`S10_RETIER_LIVE = true`); the byte
+  gate that proved it inert while off (6/6 md5 at s9/s10 × q30/60/90) is
+  superseded by the dep-bump A/B, where s9/s10 are the biggest movers
+  (−12 to −15% median BD). Conformance: 0 failures across ~4,000 PALCONF'd
+  cells at landing. Note the measured configs included the ss2 tune +
+  palette and ravif selects neither — see the dep-bump entry's caveats.
+- **s6-s8 top-7 keyframe intra RDO arm, still default-off** (9e413ac0 message /
   4b98f0f8 content): `S6_INTRA7_LIVE` const + `SpeedTweaks.intra_top7` —
   the P2HEADS-measured global fast-tier arm (`ComplexKeyframes` +
   `filter_intra=Some(false)`, the zenrav1e#5-safe top-7 form; the table's
@@ -31,9 +114,10 @@ encoder by Kornel Lesiński, extended for the zenrav1e fork's still-image work.
   veto-adjusted): s6 −0.56 / s8 −1.17 median BD, composition-stable on the
   P1 partition ship point; on the P2 composed fast mode it added −0.39 med
   train / −1.34 med val (composed+i7 13/13 better vs base, 0 butteraugli
-  vetoes). OFF until the zenrav1e dep bump (the `filter_intra` override
-  lands post-0.1.4); byte-identical while off (9/9-cell gate). Record:
-  zenavif `benchmarks/rd_gap_p2heads_2026-07-04.tsv`.
+  vetoes). STILL OFF, but no longer for a dep-bump reason — see the
+  `S6_INTRA7_LIVE` entry at the top of [Unreleased] for the re-measurement
+  and the exact unblocking step. Record: zenavif
+  `benchmarks/rd_gap_p2heads_2026-07-04.tsv`.
 
 ### Fixed
 - **Default tile count no longer scales with host core count** (55f8c935):
@@ -56,8 +140,8 @@ encoder by Kornel Lesiński, extended for the zenrav1e fork's still-image work.
   `benchmarks/rd_gap_fastwins_2026-07-04.tsv` + `docs/SPEED_LADDER.md`.
 
 ### Added
-- **s4–s8 rect-partition liveness arms** (release-gated `S6_PART_PRUNE_LIVE=
-  false`; P1PART 2026-07-04, FAST_TIER_PARITY_PLAN P1 lever 1): the speed
+- **s4–s8 rect-partition liveness arms** (`S6_PART_PRUNE_LIVE`, now
+  `true`; P1PART 2026-07-04, FAST_TIER_PARITY_PLAN P1 lever 1): the speed
   table amputated HORZ/VERT at s4+ (`non_square_partition_max_threshold`
   8×8); these arms raise the threshold to 16×16 under the zenrav1e
   `topdown_prune` NONE-first candidate walk with the measured gate triple
@@ -73,15 +157,16 @@ encoder by Kornel Lesiński, extended for the zenrav1e fork's still-image work.
   cpu6iq-ai +0.3→−3.6/−5.1 (crossed), s4 vs cpu2def-ai +2.8→−0.9/−5.6
   (crossed). The beyond-budget vargate/max32 arms (88–104% of the
   remaining s6→s4 step at 2.4–2.9×) are recorded in the zenavif TSV as
-  per-image-hint targets, not shipped. Byte-identical at
-  every speed while gated (18/18-cell md5 vs 4f2caa93; the threshold value
-  is gated too — it is live in bottom-up edge-superblock coding even on
-  registry zenrav1e). Flip at the zenrav1e dep bump (knob lands
-  post-0.1.4). Record: zenavif `benchmarks/rd_gap_p1part_2026-07-04.tsv`.
+  per-image-hint targets, not shipped. NOW LIVE
+  (`S6_PART_PRUNE_LIVE = true`), which also un-gates the 16×16 threshold
+  value. Scope caveat: the shipped band is 4..=8 but only s4/s6/s8 were ever
+  fit — s5 and s7 ride along un-fit, and s5 is the weakest row in the
+  dep-bump re-measurement. Record: zenavif
+  `benchmarks/rd_gap_p1part_2026-07-04.tsv` + this crate's
+  `benchmarks/gate_flip_summary_2026-08-06.tsv`.
 
-- **s6–s8 depth-1 intra tx-size RDO arms** (release-gated
-  `S6_TX_SIZE_RDO_LIVE = false`, byte-identical until the zenrav1e
-  dep bump; 7baad5f9): the s4→s6 rdo_tx cliff decomposition (zenavif
+- **s6–s8 depth-1 intra tx-size RDO arms** (`S6_TX_SIZE_RDO_LIVE`, now
+  `true`; 7baad5f9): the s4→s6 rdo_tx cliff decomposition (zenavif
   FAST_TIER_PARITY_PLAN P0) measured that keeping ONLY the tx-SIZE half
   of the coupled `rdo_tx_decision` boolean alive, depth-limited to 1
   split level with DCT-only types, recovers 51% of the whole s6→s4 RD
@@ -90,8 +175,8 @@ encoder by Kornel Lesiński, extended for the zenrav1e fork's still-image work.
   −2.89/−3.52/−5.49 at 1.43×. The tx-TYPE half alone costs 2.4× with a
   butteraugli-max veto and only pays composed (size1+reduced-types = 92%
   of the step at 4.6× solo — recorded as P1 seed data, not shipped);
-  `reduced_tx_set` alone at s6/s8 is a measured null. At the dep bump:
-  flip the const + uncomment the two apply lines in `speed_settings()`.
+  `reduced_tx_set` alone at s6/s8 is a measured null. Armed at the dep
+  bump (const + both apply lines).
 - `GainMapData` carries the gain map's full mux description: `alt_colr_cicp`
   (CICP `colr` for the alternate rendition on the `tmap` item; unsupported
   code points fail with `Error::Unsupported` instead of being dropped),
@@ -118,7 +203,7 @@ encoder by Kornel Lesiński, extended for the zenrav1e fork's still-image work.
 - `expert::InternalParams.sb_q_scale`: per-64×64-superblock AC quantizer
   scale map for the color encode, forwarded to zenrav1e as
   `FrameHints::sb_q_scale` (the closed-loop second-pass channel — see
-  zenavif `docs/DIFFMAP_TWO_PASS.md`). RELEASE-GATED behind
-  `pub const FRAME_HINTS_LIVE = false` until the zenrav1e dep bumps past
-  0.1.4; while false the map is accepted but not applied (byte-identical)
-  and closed-loop callers must check the const (13b1ca4b).
+  zenavif `docs/DIFFMAP_TWO_PASS.md`). LIVE as of 619d81a
+  (`FRAME_HINTS_LIVE = true`); the const remains public so a caller built
+  against a zenrav1e without `FrameParameters::frame_hints` can still fail
+  honestly instead of silently double-encoding (13b1ca4b).

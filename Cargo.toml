@@ -48,11 +48,12 @@ avif-parse = "2.0.0"
 # encoder's own output and score it, so a gate flip's effect on bytes AND
 # quality is measured rather than asserted. cavif is publish = false, so these
 # never reach a registry package.
-# Sibling checkout (0.6.0 staging), not registry 0.5.7: 0.5.7's aarch64 NEON
+# Pinned git rev (0.6.0 staging), not registry 0.5.7: 0.5.7's aarch64 NEON
 # self-guided loop-restoration path panics with an out-of-bounds index while
 # decoding our own low-quality (LRF-on) encodes — measured here, see
-# benchmarks/gate_flip_composed_2026-08-06.tsv.meta.
-rav1d-safe = { path = "../rav1d-safe", default-features = false, features = ["bitdepth_8", "bitdepth_16"] }
+# benchmarks/gate_flip_composed_2026-08-06.tsv.meta. A git rev rather than the
+# sibling path so CI (which checks out this repo alone) can still resolve it.
+rav1d-safe = { git = "https://github.com/imazen/rav1d-safe", rev = "a6a7e232f9cdbf9c4baed393738fde7fb683afc8", default-features = false, features = ["bitdepth_8", "bitdepth_16"] }
 fast-ssim2 = { version = "0.8.2", features = ["imgref"] }
 zenresize = { version = "0.3.1", default-features = false, features = ["std"] }
 
