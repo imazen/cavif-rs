@@ -1274,6 +1274,10 @@ impl Encoder<'_> {
             if let Some(r) = self.override_partition_range { speed.partition_range = Some(r); }
             if let Some(v) = self.override_complex_prediction_modes {
                 speed.complex_prediction_modes = Some(v);
+                // An explicit prediction-modes override takes this axis over
+                // from the speed table: the s6-s8 top-7 arm (S6_INTRA7_LIVE)
+                // must not clobber what the caller asked for.
+                speed.intra_top7 = None;
             }
             if let Some(v) = self.override_lrf { speed.lrf = Some(v); }
             if let Some(v) = self.override_fast_deblock { speed.fast_deblock = Some(v); }
@@ -1529,6 +1533,9 @@ impl Encoder<'_> {
                 if let Some(r) = override_partition_range { speed.partition_range = Some(r); }
                 if let Some(v) = override_complex_prediction_modes {
                     speed.complex_prediction_modes = Some(v);
+                    // See the still-image path: an explicit override owns the
+                    // axis, so disarm the S6_INTRA7_LIVE table arm.
+                    speed.intra_top7 = None;
                 }
                 if let Some(v) = override_lrf { speed.lrf = Some(v); }
                 if let Some(v) = override_fast_deblock { speed.fast_deblock = Some(v); }
@@ -1821,67 +1828,43 @@ pub(crate) struct SpeedTweaks {
     /// Offer AV1's mixed 3-way partition types (HORZ_A/B, VERT_A/B) in the
     /// RDO search. ~1.5x encode time for a small compression win — the s1
     /// "deep" mode ingredient (zenrav1e#27).
-    // dead_code: not applied until the zenrav1e dep bump (the knob lands
-    // post-0.1.4); the apply line in `speed_settings()` is commented until
-    // then. Remove the allow when uncommenting.
-    #[allow(dead_code)]
     pub mixed_3way_partitions: Option<bool>,
     /// Top-7 keyframe intra RDO via `ComplexKeyframes` +
     /// `filter_intra=Some(false)` (the zenrav1e#5-safe form) — the P2HEADS
     /// measured global fast-tier arm (see `S6_INTRA7_LIVE`).
-    // dead_code: not applied until the zenrav1e dep bump (the filter_intra
-    // override lands post-0.1.4); the apply block in `speed_settings()` is
-    // commented until then. Remove the allow when uncommenting.
-    #[allow(dead_code)]
     pub intra_top7: Option<bool>,
     /// Recursion depth of the topdown SPLIT-trial cost refinement (1 = the
     /// shipped one-level estimate; measured depth-2 verdict below at the
     /// `split_trial_depth` arm — zenrav1e#27).
-    // dead_code: same release-gating as mixed_3way_partitions above.
-    #[allow(dead_code)]
     pub split_trial_depth: Option<u8>,
     /// Decoupled intra tx-SIZE RDO (zenrav1e `rdo_tx_size_override`): keep
     /// the tx-size search alive at tiers whose `rdo_tx_decision` is off,
     /// without re-enabling the tx-TYPE search (DCT-only). The s6-s8 arm of
     /// the FASTWINS P0 decomposition — see `S6_TX_SIZE_RDO_LIVE`.
-    // dead_code: same release-gating as mixed_3way_partitions above.
-    #[allow(dead_code)]
     pub rdo_tx_size_override: Option<bool>,
     /// Depth cap for the intra tx-size RDO walk (zenrav1e
     /// `rdo_tx_size_depth`): 1 = largest + one split level, the measured
     /// sweet spot of the P0 decomposition (depth 2 adds ~-0.7% median BD
     /// for +10% time).
-    // dead_code: same release-gating as mixed_3way_partitions above.
-    #[allow(dead_code)]
     pub rdo_tx_size_depth: Option<u8>,
     /// P1 partition-pruning arm (zenrav1e `topdown_prune`, P1PART
     /// 2026-07-04): NONE-first top-down candidate walk + the opt-in gates
     /// below, used to keep HORZ/VERT partitions affordable at fast tiers
     /// whose tables previously amputated them. See `S6_PART_PRUNE_LIVE`.
-    // dead_code: same release-gating as mixed_3way_partitions above.
-    #[allow(dead_code)]
     pub prune_none_breakout: Option<f32>,
-    // dead_code: same release-gating as mixed_3way_partitions above.
-    #[allow(dead_code)]
     pub prune_rect_margin: Option<f32>,
     /// `Some(0.0)` = HORZ_4/VERT_4 (and mixed 3-way) candidates evaluated
     /// only on SPLIT-dominant blocks (the one-sided NONE-dominance gate at
     /// margin 0: any NONE advantage over the SPLIT-trial estimate skips
     /// them) while HORZ/VERT stay unconditionally live — the shipped s4-s8
     /// configuration.
-    // dead_code: same release-gating as mixed_3way_partitions above.
-    #[allow(dead_code)]
     pub prune_four_way_margin: Option<f32>,
-    // dead_code: same release-gating as mixed_3way_partitions above.
-    #[allow(dead_code)]
     pub prune_homogeneity_gate: Option<f32>,
     /// SATD-decides intra budget (zenrav1e `num_modes_rdo_override`,
     /// 071e9844): cap the number of SATD-ranked intra candidates that get
     /// full RD. `Some(1)` = RD codes only the SATD winner — the aom
     /// winner_mode_reduction analog, the S10-program s9'/s10' ingredient
     /// (see `S10_RETIER_LIVE`).
-    // dead_code: same release-gating as mixed_3way_partitions above.
-    #[allow(dead_code)]
     pub num_modes_rdo_override: Option<u8>,
     pub min_tile_size: u16,
 }
@@ -1895,7 +1878,7 @@ impl SpeedTweaks {
     /// estimate. While false, `from_my_preset` output is byte-identical to
     /// the pre-s1 table at every speed. Flip at the dep bump and uncomment
     /// the two apply lines in `speed_settings()` (see zenrav1e#27).
-    const S1_DEEP_ARMS_LIVE: bool = false;
+    const S1_DEEP_ARMS_LIVE: bool = true;
 
     /// Master switch for the s6-s8 depth-1 tx-size RDO arms (FASTWINS P0,
     /// FAST_TIER_PARITY_PLAN; zenavif benchmarks/rd_gap_fastwins_2026-07-04
@@ -1917,7 +1900,7 @@ impl SpeedTweaks {
     /// that release); while false, `from_my_preset` output is
     /// byte-identical at every speed. Flip at the dep bump and uncomment
     /// the two apply lines in `speed_settings()`.
-    const S6_TX_SIZE_RDO_LIVE: bool = false;
+    const S6_TX_SIZE_RDO_LIVE: bool = true;
 
     /// Master switch for the s4-s8 rect-partition liveness arms (P1PART
     /// 2026-07-04, FAST_TIER_PARITY_PLAN P1 lever 1; zenavif
@@ -1958,7 +1941,7 @@ impl SpeedTweaks {
     /// every speed (the 16×16 threshold value is ALSO gated: it is live in
     /// bottom-up edge-superblock coding even on registry builds). Flip at
     /// the dep bump and uncomment the apply block in `speed_settings()`.
-    const S6_PART_PRUNE_LIVE: bool = false;
+    const S6_PART_PRUNE_LIVE: bool = true;
 
     /// Master switch for the s6-s8 top-7 keyframe intra RDO arm (P2HEADS
     /// 2026-07-04, FAST_TIER_PARITY_PLAN P2 head-3 axis; zenavif
@@ -2037,7 +2020,7 @@ impl SpeedTweaks {
     /// and uncomment the num_modes_rdo apply line in `speed_settings()`.
     /// Alpha-channel caveat: these rows also govern the alpha (Cs400)
     /// encode; the corpus carries no alpha — cost impact there unmeasured.
-    const S10_RETIER_LIVE: bool = false;
+    const S10_RETIER_LIVE: bool = true;
 
     pub fn from_my_preset(speed: u8, quantizer: u8, long_edge: usize) -> Self {
         // Use fixed quantizer thresholds instead of quality_to_quantizer()
@@ -2248,12 +2231,12 @@ impl SpeedTweaks {
         if let Some(v) = self.use_satd_subpel { speed_settings.motion.use_satd_subpel = v; }
         if let Some(v) = self.fine_directional_intra { speed_settings.prediction.fine_directional_intra = v; }
         if let Some(v) = self.complex_prediction_modes { speed_settings.prediction.prediction_modes = if v { PredictionModesSetting::ComplexAll } else { PredictionModesSetting::Simple} }
-        // UNCOMMENT at the zenrav1e dep bump (the filter_intra override lands post-0.1.4; see S6_INTRA7_LIVE).
-        // Must stay AFTER the complex_prediction_modes apply (it refines the forced-Simple guard):
-        // if self.intra_top7 == Some(true) {
-        //     speed_settings.prediction.prediction_modes = PredictionModesSetting::ComplexKeyframes;
-        //     speed_settings.prediction.filter_intra = Some(false);
-        // }
+        // Must stay AFTER the complex_prediction_modes apply (it refines the
+        // forced-Simple guard); see S6_INTRA7_LIVE.
+        if self.intra_top7 == Some(true) {
+            speed_settings.prediction.prediction_modes = PredictionModesSetting::ComplexKeyframes;
+            speed_settings.prediction.filter_intra = Some(false);
+        }
         if let Some((min, max)) = self.partition_range {
             debug_assert!(min <= max);
             fn sz(s: u8) -> BlockSize {
@@ -2272,27 +2255,25 @@ impl SpeedTweaks {
         if let Some(v) = self.segmentation { speed_settings.segmentation = v; }
         if let Some(v) = self.lru_on_skip { speed_settings.lru_on_skip = v; }
         if let Some(v) = self.non_square_partition_max_threshold { speed_settings.partition.non_square_partition_max_threshold = v; }
-        // UNCOMMENT at the zenrav1e dep bump (knob lands post-0.1.4; see S1_DEEP_ARMS_LIVE):
-        // if let Some(v) = self.mixed_3way_partitions { speed_settings.partition.mixed_3way_partitions = v; }
-        // UNCOMMENT at the zenrav1e dep bump (knob lands post-0.1.4; see S1_DEEP_ARMS_LIVE):
-        // if let Some(v) = self.split_trial_depth { speed_settings.partition.split_trial_depth = v; }
-        // UNCOMMENT at the zenrav1e dep bump (knobs land post-0.1.4; see S6_TX_SIZE_RDO_LIVE):
-        // if let Some(v) = self.rdo_tx_size_override { speed_settings.transform.rdo_tx_size_override = Some(v); }
-        // UNCOMMENT at the zenrav1e dep bump (knobs land post-0.1.4; see S6_TX_SIZE_RDO_LIVE):
-        // if let Some(v) = self.rdo_tx_size_depth { speed_settings.transform.rdo_tx_size_depth = Some(v); }
-        // UNCOMMENT at the zenrav1e dep bump (knob lands post-0.1.4; see S10_RETIER_LIVE):
-        // if let Some(v) = self.num_modes_rdo_override { speed_settings.prediction.num_modes_rdo_override = Some(v); }
-        // UNCOMMENT at the zenrav1e dep bump (knob lands post-0.1.4; see S6_PART_PRUNE_LIVE):
-        // if self.prune_none_breakout.is_some() || self.prune_rect_margin.is_some()
-        //     || self.prune_four_way_margin.is_some() || self.prune_homogeneity_gate.is_some()
-        // {
-        //     speed_settings.partition.topdown_prune = Some(TopdownPartitionPrune {
-        //         none_breakout: self.prune_none_breakout,
-        //         rect_margin: self.prune_rect_margin,
-        //         four_way_margin: self.prune_four_way_margin,
-        //         homogeneity_gate: self.prune_homogeneity_gate,
-        //     });
-        // }
+        // See S1_DEEP_ARMS_LIVE:
+        if let Some(v) = self.mixed_3way_partitions { speed_settings.partition.mixed_3way_partitions = v; }
+        if let Some(v) = self.split_trial_depth { speed_settings.partition.split_trial_depth = v; }
+        // See S6_TX_SIZE_RDO_LIVE (and the s9 row of S10_RETIER_LIVE):
+        if let Some(v) = self.rdo_tx_size_override { speed_settings.transform.rdo_tx_size_override = Some(v); }
+        if let Some(v) = self.rdo_tx_size_depth { speed_settings.transform.rdo_tx_size_depth = Some(v); }
+        // See S10_RETIER_LIVE:
+        if let Some(v) = self.num_modes_rdo_override { speed_settings.prediction.num_modes_rdo_override = Some(v); }
+        // See S6_PART_PRUNE_LIVE:
+        if self.prune_none_breakout.is_some() || self.prune_rect_margin.is_some()
+            || self.prune_four_way_margin.is_some() || self.prune_homogeneity_gate.is_some()
+        {
+            speed_settings.partition.topdown_prune = Some(TopdownPartitionPrune {
+                none_breakout: self.prune_none_breakout,
+                rect_margin: self.prune_rect_margin,
+                four_way_margin: self.prune_four_way_margin,
+                homogeneity_gate: self.prune_homogeneity_gate,
+            });
+        }
 
         speed_settings
     }
@@ -2680,14 +2661,13 @@ fn init_frame_1<P: zenrav1e::Pixel + Default>(
 
 /// Whether the per-superblock quantizer-scale hint passthrough
 /// (`expert::InternalParams::sb_q_scale` → zenrav1e `FrameHints`) is
-/// active in this build. **FALSE until the zenrav1e dep bumps past
-/// 0.1.4**: the `FrameHints` input lands on zenrav1e master at
-/// `c4047cec`, after the 0.1.4 release. While false, supplied maps are
-/// accepted but not applied (encodes stay byte-identical), so
-/// closed-loop callers MUST check this and fail honestly rather than
-/// silently paying for a second pass that cannot steer anything. At the
-/// dep bump: flip to `true` and uncomment the hinted-send block in
-/// `encode_to_av1`.
+/// active in this build. **TRUE since the zenrav1e dep moved to master
+/// (0.2.0)**, which carries the `FrameHints` input (`c4047cec`). The
+/// constant stays public because it is the honest signal a closed-loop
+/// caller checks before paying for a second pass: were the crate ever
+/// built against a zenrav1e without `FrameParameters::frame_hints`, this
+/// would be `false` and supplied maps would be accepted-then-discarded.
+/// Liveness is pinned by `tests/frame_hints_live.rs`.
 #[cfg(feature = "imazen")]
 pub const FRAME_HINTS_LIVE: bool = true;
 
@@ -2735,11 +2715,9 @@ fn encode_to_av1<P: zenrav1e::Pixel>(
     // `send_frame` returns a bare `EncoderStatus`; convert it (preserving the
     // rav1e reason) and trace it at this boundary.
     //
-    // Per-SB quantizer-scale hints (closed-loop second pass). RELEASE-GATED:
-    // the `FrameParameters.frame_hints` field + `FrameHints` type need
-    // zenrav1e > 0.1.4 (master `c4047cec`). At the dep bump: flip
-    // `FRAME_HINTS_LIVE` to true and swap the plain send below for the
-    // commented hinted send.
+    // Per-SB quantizer-scale hints (closed-loop second pass). LIVE: the
+    // `FrameParameters.frame_hints` field + `FrameHints` type came in with the
+    // zenrav1e master (0.2.0) dep. See `FRAME_HINTS_LIVE`.
     #[cfg(feature = "imazen")]
     if FRAME_HINTS_LIVE
         && let Some(sb_q_scale) = p.frame_hints_sb_q_scale.clone()
