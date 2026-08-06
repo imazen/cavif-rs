@@ -1875,7 +1875,7 @@ impl SpeedTweaks {
     /// LIVE since the zenrav1e dep moved to master/0.2.0 (the knobs the deep
     /// arms rely on landed after 0.1.4); see zenrav1e#27. Speed 1 is no longer
     /// byte-identical to speed 2 — that is the point of the row.
-    /// Re-measured on the dep-bump config (`benchmarks/gate_flip_composed_
+    /// Re-measured on the dep-bump config (`benchmarks/gate_flip_summary_
     /// 2026-08-06.tsv`, tune-off — see the GATE_FLIP note there about the
     /// difference from the tune-ss2 conditions the arms were originally fit
     /// under). Scope note: the arms are INERT at the 64 px tier on that
@@ -1901,7 +1901,29 @@ impl SpeedTweaks {
     /// wins+median rule. LIVE since the zenrav1e dep moved to master/0.2.0
     /// (the `rdo_tx_size_override`/`rdo_tx_size_depth` knobs landed after
     /// 0.1.4). Re-measured composed on the dep-bump config:
-    /// `benchmarks/gate_flip_composed_2026-08-06.tsv`.
+    /// `benchmarks/gate_flip_summary_2026-08-06.tsv`.
+    ///
+    /// KNOWN 10-BIT SIDE EFFECT — read before re-tuning this arm. Arming it
+    /// widens the worst-case per-channel error on isolated specular impulses
+    /// in 10-bit identity-matrix (GBR) encodes, which turns zenavif's
+    /// `tests/hdr_roundtrip.rs::pq10_pixel_fidelity_within_bounds` red:
+    /// q95/s8 max |Δ| 607 → 1281 in 16-bit units against that test's 900
+    /// budget (`S6_PART_PRUNE_LIVE` alone takes it to 960; `S1_DEEP_ARMS_LIVE`
+    /// and `S10_RETIER_LIVE` do not apply at s8 and are exactly inert there —
+    /// bisected with `examples/hdr_pq10_probe.rs`, which reproduces that test
+    /// inside this crate). It is an RD reallocation, not corruption: exactly
+    /// ONE cell of 9,216 crosses the budget (a single max-white specular
+    /// pixel, 1023 → 1003 in ten-bit units, one channel), the ramp and
+    /// colour-patch regions are unchanged in their maxima (461/420 both
+    /// sides), mean |Δ| IMPROVES at every quality, and bytes drop 18-25%.
+    /// Compared at matched BYTES rather than at a matched quality *setting*
+    /// the arm wins the tail too: baseline q90 = 1125 B / max 1665 / mean 85
+    /// versus armed q95 = 1127 B / max 1281 / mean 47. Caveats: n = 1
+    /// synthetic fixture, no perceptual metric on the 10-bit path, and this
+    /// arm's whole fitting record is 8-bit YCbCr. Whether that test's 900
+    /// budget should move is a user decision and was deliberately NOT taken
+    /// here. Full record: the "10-BIT HDR TAIL" section of
+    /// `benchmarks/gate_flip_summary_2026-08-06.tsv.meta`.
     const S6_TX_SIZE_RDO_LIVE: bool = true;
 
     /// Master switch for the s4-s8 rect-partition liveness arms (P1PART
@@ -1943,7 +1965,7 @@ impl SpeedTweaks {
     /// value, which was already live in bottom-up edge-superblock coding.
     /// SCOPE CAVEAT: the shipped band is 4..=8, but the P1PART record above
     /// only measured s4, s6 and s8 — s5 and s7 ride along un-fit. The
-    /// dep-bump re-measurement (`benchmarks/gate_flip_composed_2026-08-06
+    /// dep-bump re-measurement (`benchmarks/gate_flip_summary_2026-08-06
     /// .tsv`) covers all five rows; keep s5/s7 in any future refit.
     const S6_PART_PRUNE_LIVE: bool = true;
 
@@ -2046,7 +2068,7 @@ impl SpeedTweaks {
     /// Psychovisual / StillImage, and there is no palette pass-through yet).
     /// So the rows ship in a configuration the original grid did not cover.
     /// They were therefore re-measured as-shipped, tune-off, at the dep bump:
-    /// `benchmarks/gate_flip_composed_2026-08-06.tsv`. Revisit both rows if
+    /// `benchmarks/gate_flip_summary_2026-08-06.tsv`. Revisit both rows if
     /// a tune/palette pass-through ever lands.
     /// Alpha-channel caveat: these rows also govern the alpha (Cs400)
     /// encode; the corpus carries no alpha — cost impact there unmeasured.

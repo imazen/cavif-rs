@@ -1,0 +1,324 @@
+gate_flip_composed / 2026-08-06
+Cashing in the zenrav1e dep-bump release gates: a before/after of the ravif
+speed table with the gate consts off (baseline) vs on.
+
+WHAT MOVED
+  Four consts in ravif/src/av1encoder.rs flipped false -> true AND their apply
+  blocks in speed_settings() uncommented (a flipped const over a commented
+  apply block is a no-op that looks done):
+      S1_DEEP_ARMS_LIVE      speed 1
+      S6_TX_SIZE_RDO_LIVE    speeds 6-8
+      S6_PART_PRUNE_LIVE     speeds 4-8
+      S10_RETIER_LIVE        speeds 9-10
+  S6_INTRA7_LIVE (speeds 6-8) is measured here but NOT armed — see below.
+  Nothing in zenrav1e was changed; every knob these arms drive is a
+  caller-armed, default-off library opt-in by that crate's own design.
+
+ARMS IN THE FILES
+  baseline_all_gates_off   all five consts false  (= the pre-flip shipped code)
+  shipped_4_gates_on       the four above true, S6_INTRA7_LIVE false  (SHIPPED)
+  all5_gates_on            all five true          (isolates intra7 vs shipped)
+
+PROVENANCE
+  ravif           54d1aef (this repo, branch feat/zenrav1e-master-bump)
+                  code state c69050a; 54d1aef adds only docs + the git-rev
+                  dev-dep pin, encoder bytes unchanged between them
+  zenrav1e        4d1ed620703d7eb94bb24467b44c5b498896af62  (master, 0.2.0)
+  rav1d-safe      a6a7e232f9cdbf9c4baed393738fde7fb683afc8  (decode side only)
+  fast-ssim2      0.8.2 (registry)   zenresize 0.3.1 (registry)
+  rustc           1.97.1 (8bab26f4f 2026-07-14)
+  host            Apple M4 Pro, arm64, macOS 26.5.2, 12 cores (8P + 4E)
+  corpus          ~/work/zen/codec-corpus (clic2025/training, gb82-sc)
+
+HARNESS
+  examples/gate_sweep.rs in this repo. Per cell: encode RGB8 -> AVIF with
+  zenravif (defaults: 4:4:4, BT.601 full range, auto bit depth = 10-bit,
+  single-threaded), parse the container with avif-parse, decode the primary
+  item with rav1d-safe (1 thread, max_frame_delay 1), invert full-range BT.601
+  to RGB8, score SSIMULACRA2 against the source. Emits bytes, bpp, ssim2,
+  the AVIF file's sha256, and encode wall time.
+
+  Correctness pin: every q100 cell scores exactly 100.0000, i.e. the decode
+  path and the BT.601 inverse are exact. Cells are joined pre/post on
+  (class, size, speed, quality); an identical sha256 means the encoder
+  produced the same bytes.
+
+  Sources were downscaled with zenresize Mitchell-Netravali. Upscaling is
+  never done: a size tier above a source's native long edge is skipped.
+
+  Build/run: cargo build --release --example gate_sweep   (RUSTC_WRAPPER=sccache,
+  -j 4, no -C target-cpu=native). Exact sweep commands are in COMMANDS below.
+
+GRID (sweep discipline: 4 size tiers, low-q density equal to high-q, 5 content
+classes, every speed row a gate touches plus untouched controls)
+  grid       sizes(long edge)  speeds      quality           cells/arm
+  main       64, 256, 1024     4,5,6,7,8,9,10   5..100 step 5    2100
+  large2048  2048              4,6,8,10         5..95  step 10    200
+  s1_small   64, 256           1,2              5..100 step 5     400
+  s1_med     1024              1,2              5..95  step 10    100
+  Total 7,600+ encode+score cells across the three arms.
+
+  Content classes (one source each):
+    photo_a     clic2025/training/0c49a5cce349020bbba2f97ae41e90ba.png 2048x1358
+    photo_b     clic2025/training/100a02c269c5948392f283b2aa3bb4da.png 2048x1365
+    screen      gb82-sc/imac_dark.png                                 2940x1912
+    text_ui     gb82-sc/codec_wiki.png                                2560x1664
+    lineart_ui  gb82-sc/windows.png                                   2560x1392
+
+DEVIATIONS FROM THE SWEEP-DISCIPLINE DEFAULTS, stated rather than hidden
+  * The "large" tier is 2048, not 4096. No >=4096 source exists in the local
+    corpus checkout for the photographic classes (clic2025 tops out at 2048)
+    and upscaling is banned, so 4096 was NOT MEASURED rather than faked.
+  * The 2048 and s1_med grids use quality step 10 instead of 5, and 2048 omits
+    speeds 5, 7 and 9. Cost: s1 at 2048 is ~48 s/cell before the flip and
+    several times that after. Density is uniform across the q range in every
+    grid — no grid is denser at high q than low q.
+  * s1 at 2048 was NOT MEASURED at all (same cost reason). The s1 arm is
+    covered at 64, 256 and 1024.
+  * Speeds 3 and 5/7 at 2048 were not swept; s2 and s3 are the untouched
+    control rows and are covered in the liveness grid below.
+
+METRIC
+  Pareto-front SSIMULACRA2 BD-rate, per (content class, size, speed) curve:
+  cells are reduced to a monotone rate/quality front (dominated cells dropped),
+  log-rate is integrated over the overlapping ssim2 range, and the result is
+  reported as a percentage. NEGATIVE = fewer bytes at matched quality = better.
+  bytes_ratio_at_ssim2_N columns are the arm's byte count divided by the
+  baseline's at that interpolated quality (<1 = smaller); blank where a curve
+  does not span that quality.
+
+  Caution for anyone re-deriving these: a naive BD over quality-sorted cells
+  gives badly wrong answers here, because these RD curves are non-monotone at
+  the low-q end. The pareto reduction is what makes them comparable.
+
+SHIPPED (4 arms) vs baseline — main grid 64/256/1024, s4-s10
+   by speed: s4 -1.65 (n=14)  s5 -1.96 (n=15)  s6 -5.25 (n=14)  s7 -6.05 (n=13)  s8 -6.05 (n=13)  s9 -11.94 (n=14)  s10 -13.50 (n=12)
+   by size:  64 -2.76 (n=33)  256 -7.12 (n=31)  1024 -8.32 (n=31)
+   OVERALL n=95 median -5.30  mean -7.24  curves worse: 4/95
+   worse: photo_a/256/s5 +6.46  photo_a/1024/s5 +1.49  lineart_ui/64/s5 +0.73  screen/64/s5 +0.38
+
+ALL FIVE arms vs baseline — main grid
+   by speed: s4 -1.65 (n=14)  s5 -1.96 (n=15)  s6 -4.23 (n=15)  s7 -6.68 (n=15)  s8 -6.68 (n=15)  s9 -11.94 (n=14)  s10 -13.50 (n=12)
+   by size:  64 -3.53 (n=34)  256 -7.83 (n=33)  1024 -8.56 (n=33)
+   OVERALL n=100 median -5.41  mean -7.92  curves worse: 5/100
+   worse: photo_a/256/s5 +6.46  photo_a/1024/s5 +1.49  lineart_ui/64/s5 +0.73  photo_a/1024/s6 +0.45  screen/64/s5 +0.38
+
+ALL FIVE arms vs baseline — large tier 2048
+   by speed: s4 -0.81 (n=5)  s6 -9.34 (n=5)  s8 -10.74 (n=5)  s10 -14.72 (n=5)
+   by size:  2048 -9.95 (n=20)
+   OVERALL n=20 median -9.95  mean -9.07  curves worse: 0/20
+
+S1 deep arms vs baseline — tiny+small 64/256
+   by speed: s1 +0.00 (n=10)  s2 +0.00 (n=10)
+   by size:  64 +0.00 (n=10)  256 +0.00 (n=10)
+   OVERALL n=20 median +0.00  mean -0.07  curves worse: 1/20
+   worse: text_ui/256/s1 +1.47
+
+S1 deep arms vs baseline — medium 1024
+   by speed: s1 -1.51 (n=5)  s2 +0.00 (n=5)
+   by size:  1024 +0.00 (n=10)
+   OVERALL n=10 median +0.00  mean -0.60  curves worse: 1/10
+   worse: text_ui/1024/s1 +0.14
+
+INTRA7 isolated (ref = shipped 4-arm, arm = 5-arm)
+   by speed: s4 +0.00 (n=13)  s5 +0.00 (n=15)  s6 -0.60 (n=15)  s7 -1.30 (n=14)  s8 -1.30 (n=14)  s9 +0.00 (n=13)  s10 +0.00 (n=13)
+   by size:  64 +0.00 (n=33)  256 +0.00 (n=30)  1024 +0.00 (n=34)
+   OVERALL n=97 median +0.00  mean -0.53  curves worse: 4/97
+   worse: photo_a/1024/s6 +0.82  screen/1024/s6 +0.48  photo_b/64/s6 +0.38  photo_a/256/s6 +0.28
+
+BYTE-CHANGE LIVENESS (shipped 4-arm vs baseline; sha-identical cells / total)
+      64 s1     100/100  identical
+      64 s2     100/100  identical
+      64 s4      16/100  identical
+      64 s5       5/100  identical
+      64 s6       0/100  identical
+      64 s7       0/100  identical
+      64 s8       0/100  identical
+      64 s9       0/100  identical
+      64 s10      0/100  identical
+     256 s1       1/100  identical
+     256 s2     100/100  identical
+     256 s4       0/100  identical
+     256 s5       0/100  identical
+     256 s6       0/100  identical
+     256 s7       0/100  identical
+     256 s8       0/100  identical
+     256 s9       0/100  identical
+     256 s10      0/100  identical
+    1024 s1       0/50   identical
+    1024 s2      50/50   identical
+    1024 s4       0/100  identical
+    1024 s5       0/100  identical
+    1024 s6       0/100  identical
+    1024 s7       0/100  identical
+    1024 s8       0/100  identical
+    1024 s9       0/100  identical
+    1024 s10      0/100  identical
+
+10-BIT HDR TAIL — zenavif tests/hdr_roundtrip.rs::pq10_pixel_fidelity_within_bounds
+Reported red on the armed tree. REPRODUCED, ATTRIBUTED, and characterised here
+with examples/hdr_pq10_probe.rs, which mirrors that test exactly inside this
+repo (same 64x48 fixture, same encode_raw_planes_10_bit + MC=Identity GBR path,
+same q95/s8, same 16->10 `v>>6` / 10->16 `(v<<6)|(v>>4)` reconstruction, same
+statistic). The probe reproduces the documented baseline number 607/mean 50
+bit-for-bit, so it is a faithful stand-in.
+
+  arms armed at s8            max |D|   mean |D|   bytes
+  none (pre-flip baseline)        607         50    1407
+  S6_PART_PRUNE_LIVE only         960         49    1393
+  S6_TX_SIZE_RDO_LIVE only       1281         47    1133
+  all four (shipped)             1281         47    1127
+  S1_DEEP / S10_RETIER only       607         50    1407   (inert at s8)
+
+ATTRIBUTION: S6_TX_SIZE_RDO_LIVE is the dominant cause (607 -> 1281 on its own);
+S6_PART_PRUNE_LIVE moves it to 960 on its own, which is also over the test's 900
+budget. S1_DEEP and S10_RETIER do not apply at speed 8 and are exactly inert.
+
+IS IT A DEFECT OR AN RD REALLOCATION? The evidence says reallocation:
+  * Exactly ONE cell of 9,216 exceeds 900: (x=0, y=35) blue, 65535 -> 64254.
+    That is 1023 -> 1003 in ten-bit units on ONE channel of an isolated
+    single-pixel max-white specular impulse on a dark background — the most
+    expensive thing in the fixture to code. Second worst is 772.
+  * The error field keeps its structure. Per region, baseline -> shipped:
+    ramp max 461 -> 461, patches max 420 -> 420 (IDENTICAL), dark+specular
+    max 607 -> 1281 but its MEAN improves 95 -> 87. Only the impulse tail moved.
+  * Mean fidelity improves, and at EVERY quality:
+      q          70    80    85    90    95    99
+      mean base 204   132   109    85    50    30
+      mean ship 151    95    93    72    47    29
+  * Bytes drop 18-25% at every quality:
+      bytes base 835   949  1017  1125  1407  2229
+      bytes ship 682   764   799   885  1127  1842
+  * The max is NOT monotonically worse: base/ship max is 5157/5765 (q70),
+    3075/4420 (q80), 2186/2370 (q85), 1665/1537 (q90 — ship WINS),
+    607/1281 (q95), 221/240 (q99).
+  * Decisive framing — compare at matched BYTES, not at a matched quality
+    *setting*: baseline q90 = 1125 bytes, max 1665, mean 85.
+                shipped  q95 = 1127 bytes, max 1281, mean 47.
+    At the same bitrate the shipped encoder's tail is BETTER (1281 vs 1665) and
+    its mean is nearly half. The test pins a quality setting whose byte cost the
+    encoder no longer pays; the 900 budget was calibrated against 1407 bytes of
+    output and the arms now produce that quality setting in 1127.
+  * Nothing here resembles the failure shapes the test's own comment calls out:
+    a channel swap is ~56000 and a plane rotation is full-scale.
+  * Speed profile (q95, shipped): s2 487, s3 551, s4 487, s6 1281, s8 1281,
+    s9 1281, s10 708. The spike is confined to the depth-1 intra tx-size-RDO
+    band, which is exactly where the attributed arm applies.
+
+LIMITS OF THIS EVIDENCE, stated plainly:
+  * n = 1 synthetic 64x48 fixture. This is the only 10-bit content measured.
+    The four arms' entire fitting record — theirs and the re-measurement above —
+    is 8-bit YCbCr; a 10-bit identity-matrix (GBR planes, no chroma decorrelation)
+    encode is a different regime and has now been sampled exactly once.
+  * No butteraugli, and no perceptual metric at all on the 10-bit path — only
+    per-channel absolute delta.
+  * The budget question (is 900 still the right number, given the arms make q95
+    a ~1127-byte operating point rather than a ~1407-byte one?) is NOT decided
+    here. The test threshold was NOT touched, nothing was #[ignore]d, and no
+    assertion was weakened. It stays red and truthful pending the user's call.
+
+SOLO ENCODE COST (the RD wins above are not free)
+SOLO encode wall time, median ms over q{30,60,90}, single-threaded, one
+process at a time, NO nice (Darwin nice => background QoS/E-cores).
+     class   size  spd   baseline    shipped       x       all5       x
+   photo_a    256 s1       1032.9     1889.0   1.83x     1868.4   1.81x
+   photo_a    256 s4        254.4      463.1   1.82x      457.0   1.80x
+   photo_a    256 s5         36.7       77.2   2.10x       76.4   2.08x
+   photo_a    256 s6         37.2      122.3   3.29x      186.9   5.02x
+   photo_a    256 s8         22.3       65.0   2.91x      133.2   5.97x
+   photo_a    256 s9         13.3       17.0   1.28x       17.6   1.32x
+   photo_a    256 s10         9.2        7.7   0.84x        8.2   0.89x
+   photo_a   1024 s1       9985.0    24482.6   2.45x    30205.0   3.03x
+   photo_a   1024 s4       1734.6     2661.1   1.53x     3016.1   1.74x
+   photo_a   1024 s5        381.7      798.2   2.09x      838.4   2.20x
+   photo_a   1024 s6        381.3     1267.4   3.32x     2006.9   5.26x
+   photo_a   1024 s8        273.3      641.4   2.35x     1342.4   4.91x
+   photo_a   1024 s9        110.7      179.0   1.62x      180.8   1.63x
+   photo_a   1024 s10        81.0       71.6   0.88x       72.5   0.90x
+    screen    256 s1       1113.5     2208.2   1.98x     2238.6   2.01x
+    screen    256 s4        261.1      440.5   1.69x      445.5   1.71x
+    screen    256 s5         29.6       54.6   1.84x       55.5   1.88x
+    screen    256 s6         30.3      102.6   3.39x      161.7   5.34x
+    screen    256 s8         17.3       51.1   2.95x      108.6   6.28x
+    screen    256 s9         10.8       13.9   1.29x       14.0   1.30x
+    screen    256 s10         7.2        6.3   0.88x        6.2   0.86x
+    screen   1024 s1      12393.6    29175.7   2.35x    31231.2   2.52x
+    screen   1024 s4       1979.3     3699.1   1.87x     3954.7   2.00x
+    screen   1024 s5        339.6      868.9   2.56x      695.3   2.05x
+    screen   1024 s6        338.0     1374.2   4.07x     2054.1   6.08x
+    screen   1024 s8        247.2     1231.8   4.98x     1413.5   5.72x
+    screen   1024 s9         94.8      170.2   1.80x      167.8   1.77x
+    screen   1024 s10        65.9       63.7   0.97x       61.0   0.93x
+
+LIVENESS OF EACH FLIPPED GATE (the specific failure mode this guards: a flipped
+const over a still-commented apply block is a no-op that looks done)
+  Read the table above. A row with 0/N sha-identical means every cell's bytes
+  moved, i.e. the apply block reached the encoder.
+    S1_DEEP_ARMS_LIVE   s1: LIVE at 256 (1/100 identical) and 1024 (0/50).
+                        INERT at 64 (100/100 identical) — the deep partition
+                        levers have nothing to reach on a sub-superblock frame.
+    S6_PART_PRUNE_LIVE  s4,s5: LIVE (16/100 and 5/100 identical at 64, 0/100
+                        everywhere else). s6-s8 also carry it.
+    S6_TX_SIZE_RDO_LIVE s6-s8: LIVE (0/100 identical at every size).
+    S10_RETIER_LIVE     s9,s10: LIVE (0/100 identical at every size).
+    S6_INTRA7_LIVE      s6-s8 only, proven by the intra7_isolated comparison:
+                        exactly those three rows move, all others 100/100
+                        identical. (Measured, positive, but NOT armed — see
+                        the const doc; the block is a test-premise conflict,
+                        not an RD result.)
+  Controls: s2 and s3 are touched by no gate and are byte-identical
+  (s2 100/100 at 64 and 256, 50/50 at 1024). A separate 150-cell liveness grid
+  (5 classes x 256 px x speeds 1-10 x q{30,60,90}) confirmed s3 15/15 identical.
+
+  Separately verified that uncommenting the apply blocks while leaving all five
+  consts false is byte-identical to the previously shipped commented-out code:
+  50/50 sha-identical at q60 across s1-s10. That is what makes the "baseline"
+  arm here a valid stand-in for the pre-flip build.
+
+WHAT IS *NOT* IN THIS BEFORE/AFTER
+  * The zenrav1e dep bump itself. Both arms are built against the same
+    zenrav1e (master 4d1ed620); only the ravif consts differ. Everything
+    measured here is attributable to the arms.
+  * Per-SB delta-q / Variance Boost / the segmentation-disable that rides with
+    them. ravif never sets `variance_boost_*` and never selects
+    `Tune::Ssimulacra2`, and none of the flips touch the `segmentation` field —
+    verified by inspection of the diff and of every write to those fields. So
+    the "turning delta-q on also disables segmentation" step (independently
+    measured elsewhere at ~+1.10 zensim / +2.9% bytes at unchanged quantizer)
+    is NOT sitting inside these numbers.
+  * Butteraugli. Only SSIMULACRA2 was computed. The original per-arm records
+    carry butteraugli-3n / butteraugli-max vetoes; those were NOT re-checked
+    here, so a metric-gaming regression would not have been caught by this
+    sweep. That is a real gap, stated rather than papered over.
+  * Alpha. Every source is opaque; the alpha (Cs400) encode these speed rows
+    also govern is unmeasured.
+  * Any size above 2048, and s1 above 1024.
+
+COMMANDS (run from the repo root; sccache on, -j 4, no target-cpu=native)
+  cargo build --release --example gate_sweep
+  # per arm, with the consts set accordingly and the binary snapshotted:
+  gate_sweep --label <arm> --out main_<arm>.tsv    --corpus ../codec-corpus \
+      --sizes 64,256,1024 --speeds 4,5,6,7,8,9,10 --qmin 5 --qmax 100 --qstep 5
+  gate_sweep --label <arm> --out large_<arm>.tsv   --corpus ../codec-corpus \
+      --sizes 2048 --speeds 4,6,8,10 --qmin 5 --qmax 95 --qstep 10
+  gate_sweep --label <arm> --out s1small_<arm>.tsv --corpus ../codec-corpus \
+      --sizes 64,256 --speeds 1,2 --qmin 5 --qmax 100 --qstep 5
+  gate_sweep --label <arm> --out s1med_<arm>.tsv   --corpus ../codec-corpus \
+      --sizes 1024 --speeds 1,2 --qmin 5 --qmax 95 --qstep 10
+
+NICE / QoS DISCIPLINE (macOS)
+  Builds and test runs used `nice -n 19` (shared machine). NOTHING TIMED DID.
+  On Darwin `nice` maps to background QoS and parks the process on E-cores,
+  which distorts wall time by roughly 40x — it is a measurement trap, not a
+  politeness knob. The RD sweeps above ran without nice but MULTI-PROCESS
+  (up to 6 concurrent single-threaded encoders), so their `enc_ms` column is
+  contended and usable only as a within-run ratio. The timing table below is a
+  separate solo run: one process at a time, nothing else on the box, no nice.
+
+FILES
+  gate_flip_summary_2026-08-06.tsv       366 rows, one per
+      (comparison, grid, class, size, speed). Committed uncompressed.
+  gate_flip_cells_2026-08-06.tsv.zst     7,700 raw cells, zstd -19.
+      Read with:  zstd -dc benchmarks/gate_flip_cells_2026-08-06.tsv.zst | less
+      Columns: arm, grid, source, class, size, width, height, speed, quality,
+               bytes, bpp, ssim2, sha256, enc_ms.

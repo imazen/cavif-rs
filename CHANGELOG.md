@@ -49,7 +49,28 @@ encoder by Kornel Lesiński, extended for the zenrav1e fork's still-image work.
   delta-q-disables-segmentation step is *not* inside this before/after; (4)
   the encode-time cost is reported separately in the `.meta` from a solo,
   un-niced run — the sweep's own `enc_ms` column came from a contended
-  multi-process run and is a ratio at best.
+  multi-process run and is a ratio at best. Solo cost of the shipped config
+  vs baseline: 1.5-2.5x at s1/s4/s5, 2.3-5.0x at s6/s8, 1.3-1.8x at s9,
+  0.84-0.97x at s10 (the re-tier is both better AND slightly faster there).
+
+- **Known: the armed rows turn zenavif's
+  `tests/hdr_roundtrip.rs::pq10_pixel_fidelity_within_bounds` red**, and the
+  threshold was deliberately NOT raised. Reproduced and bisected in-crate with
+  the new `examples/hdr_pq10_probe.rs`: at q95/s8 the 10-bit identity-matrix
+  roundtrip's max per-channel |Δ| goes 607 → 1281 (16-bit units) against that
+  test's 900 budget. `S6_TX_SIZE_RDO_LIVE` is the dominant cause (1281 on its
+  own); `S6_PART_PRUNE_LIVE` alone reaches 960; `S1_DEEP_ARMS_LIVE` and
+  `S10_RETIER_LIVE` do not apply at s8 and are exactly inert there. The
+  evidence says RD reallocation rather than corruption: exactly one cell of
+  9,216 crosses the budget (one channel of a single max-white specular pixel,
+  1023 → 1003 in ten-bit units), the ramp and colour-patch regions keep
+  identical maxima, mean |Δ| improves at every quality, bytes drop 18-25%,
+  and **at matched bytes the arm wins the tail as well** (baseline q90 =
+  1125 B / max 1665 / mean 85 vs armed q95 = 1127 B / max 1281 / mean 47).
+  Caveats: n = 1 synthetic fixture and no perceptual metric on the 10-bit
+  path. Whether that budget should move is a user decision. Full record: the
+  "10-BIT HDR TAIL" section of
+  `benchmarks/gate_flip_summary_2026-08-06.tsv.meta`.
 
 - **`S6_INTRA7_LIVE` stays `false` — measured, positive, blocked on a test
   premise, NOT on RD.** Isolated on the same grid (4-arm shipped vs 5-arm)
@@ -80,6 +101,12 @@ encoder by Kornel Lesiński, extended for the zenrav1e fork's still-image work.
   surface owns the axis it names.
 
 ### Added
+- **`examples/hdr_pq10_probe.rs`** — reproduces zenavif's PQ10 fidelity test
+  inside this crate (same fixture, same `encode_raw_planes_10_bit` + MC=Identity
+  path, same reconstruction, same statistic; it reproduces the documented
+  baseline 607/mean-50 exactly), so a speed-table change can be attributed to a
+  specific arm without building the downstream crate. `--dump` prints the worst
+  cells, a per-region breakdown, and how many cells cross the budget.
 - **`examples/gate_sweep.rs`** — the release-gate A/B harness described
   above. Root package only (`cavif`, `publish = false`), so its extra
   dev-dependencies (`rav1d-safe`, `fast-ssim2`, `zenresize`) never reach a

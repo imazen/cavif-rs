@@ -258,10 +258,10 @@ fn main() {
     let mut cells = 0usize;
 
     for (class, rel) in SOURCES {
-        if let Some(only) = &args.only {
-            if !class.contains(only.as_str()) {
-                continue;
-            }
+        if let Some(only) = &args.only
+            && !class.contains(only.as_str())
+        {
+            continue;
         }
         let path = args.corpus.join(rel);
         let src = load_source(&path);
@@ -310,7 +310,7 @@ fn main() {
                         args.label, rel, class, size, w, h, speed, q, bytes, bpp, ssim2, sha, enc_ms
                     );
                     cells += 1;
-                    if cells % 20 == 0 {
+                    if cells.is_multiple_of(20) {
                         std::fs::write(&args.out, &out).expect("write tsv");
                         eprintln!(
                             "[{:6.1}s] {cells} cells :: {class} {size} s{speed} q{q} -> {bytes} B ssim2 {ssim2:.2}",
