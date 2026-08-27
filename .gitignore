@@ -60,3 +60,4 @@ fuzz-*.log
 
 # Multi-agent coordination marker
 .workongoing
+.jj/

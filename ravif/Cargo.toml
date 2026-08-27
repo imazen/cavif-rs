@@ -16,18 +16,28 @@ rust-version = "1.93"
 [dependencies]
 zenavif-serialize = { version = "0.2.0" }  # set_gain_map_alt_icc; supplied by [patch.crates-io] until 0.2.0 publishes
 imgref = "1.12.0"
-# DEV: sibling checkout (master, 0.2.0) rather than registry 0.1.4, because
-# 0.1.4 has no `FrameHints` / `FrameParameters.frame_hints` — the sole reason
-# `FRAME_HINTS_LIVE` was hard-false, which made supplied per-SB diffmap maps
-# accepted-then-discarded. A [patch.crates-io] CANNOT do this: it only
-# substitutes a package whose version satisfies the existing requirement, and
-# 0.2.0 does not satisfy "0.1.4".
+# zenrav1e master (0.2.0, unpublished — crates.io tops out at 0.1.4) rather
+# than the registry, because 0.1.4 has no `FrameHints` /
+# `FrameParameters.frame_hints` — the sole reason `FRAME_HINTS_LIVE` was
+# hard-false, which made supplied per-SB diffmap maps accepted-then-discarded.
+# A [patch.crates-io] CANNOT do this: it only substitutes a package whose
+# version satisfies the existing requirement, and 0.2.0 does not satisfy "0.1.4".
 #
-# NOT a diffmap-only change: master carries default-ON partition/split-cost RD
-# fixes, so encoded BYTES move vs 0.1.4 across the board. Anything fitted
-# against 0.1.4 must be re-measured. Return to a registry dep at the release
-# past 0.1.4.
-zenrav1e = { path = "../../zenrav1e", default-features = false }
+# Git-rev pinned (not a `path` to the sibling checkout, which it was until
+# 2026-08-27): a path-only dep is unresolvable for anyone taking zenravif from
+# git (zenavif main -> zencodecs/zenpipe), because the path escapes this repo.
+# The same shape as the rav1d-safe / zenavif-serialize pins in the root
+# manifest. For sibling-lockstep development, add an uncommitted
+# `[patch."https://github.com/imazen/zenrav1e"] zenrav1e = { path = "../zenrav1e" }`
+# at the workspace root (or `cargo superwork patch`); bump `rev` here when
+# a zenrav1e master change is needed. Both the wasm32 dep below and this one
+# must stay on the same rev.
+#
+# NOT a diffmap-only change vs 0.1.4: master carries default-ON
+# partition/split-cost RD fixes, so encoded BYTES move vs 0.1.4 across the
+# board. Anything fitted against 0.1.4 must be re-measured. Return to a
+# registry dep at the release past 0.1.4.
+zenrav1e = { version = "0.2.0", git = "https://github.com/imazen/zenrav1e", rev = "e4883037553434efb57ecbf4414c8b49922ba3e4", default-features = false }
 rayon = { version = "1.11.0", optional = true }
 rgb = { version = "0.8", default-features = false }
 loop9 = "0.1.5"
@@ -36,7 +46,7 @@ whereat = "0.1.5"
 almost-enough = { version = "0.4.3", optional = true, default-features = false, features = ["alloc"] }
 
 [target.'cfg(target = "wasm32-unknown-unknown")'.dependencies]
-zenrav1e = { path = "../../zenrav1e", default-features = false, features = ["wasm"] }
+zenrav1e = { version = "0.2.0", git = "https://github.com/imazen/zenrav1e", rev = "e4883037553434efb57ecbf4414c8b49922ba3e4", default-features = false, features = ["wasm"] }
 
 [features]
 default = ["asm", "threading"]
