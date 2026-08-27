@@ -10,6 +10,13 @@
   wasm32 target dep carries the same rev. For sibling-lockstep work add an
   uncommitted `[patch."https://github.com/imazen/zenrav1e"]` path override at
   the workspace root.
+- `zenavif-serialize` (0.2.0, unpublished) is a git-rev dependency on the dep
+  line (archived imazen/zenavif-serialize @ `990bd6d`, f6c883b6) instead of
+  being supplied by the workspace-root `[patch.crates-io]` — a patch only
+  applies from the top-level workspace, so every git consumer of zenravif had
+  to re-supply it and zenpipe's sibling-clone CI could not. Same rev the patch
+  pinned; nothing compiled changes. Return to a registry dep at the 0.2.0
+  publish.
 
 ### Added
 - Small-rendition effort mode behind `SpeedTweaks::SMALL_PX_RDO_TX_LIVE`
