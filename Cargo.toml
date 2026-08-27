@@ -67,8 +67,6 @@ members = ["ravif"]
 targets = ["x86_64-unknown-linux-gnu"]
 rustdoc-args = ["--generate-link-to-definition"]
 
-[patch.crates-io]
-# DEV-ONLY until zenavif-serialize 0.2.0 publishes: set_gain_map_alt_icc
-# (tmap ICC alternate colr) landed on its main at this rev. Drop this patch
-# at the 0.2.0 dep bump.
-zenavif-serialize = { git = "https://github.com/imazen/zenavif-serialize", rev = "990bd6d025ece47da74cbd74c245302bd45bbf8e" }
+# (The former [patch.crates-io] zenavif-serialize git pin moved onto the dep
+# line in ravif/Cargo.toml on 2026-08-27 so git consumers of zenravif resolve
+# without re-supplying it; a [patch] here would now be unused.)

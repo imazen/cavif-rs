@@ -14,7 +14,18 @@ include = ["README.md", "CHANGELOG.md", "LICENSE-AGPL3", "LICENSE-COMMERCIAL", "
 rust-version = "1.93"
 
 [dependencies]
-zenavif-serialize = { version = "0.2.0" }  # set_gain_map_alt_icc; supplied by [patch.crates-io] until 0.2.0 publishes
+# zenavif-serialize 0.2.0 (set_gain_map_alt_icc — the tmap ICC alternate colr)
+# is unpublished (crates.io tops out at 0.1.4). Git-rev pinned on the dep line
+# rather than supplied by a root [patch.crates-io] (as it was until 2026-08-27):
+# a [patch] only applies from the top-level workspace, so every git consumer
+# of zenravif (zenavif main → zencodecs/zenpipe, and their sibling-clone CI)
+# had to re-supply it themselves — and zenpipe's CI could not. The rev is the
+# archived standalone repo's last commit (the crate now lives as a member of
+# the imazen/zenavif workspace at the same version); it is deliberately NOT
+# the zenavif workspace repo, whose corpus submodules cargo would fetch
+# (~600 MB) on every cavif-rs CI job. Return to a registry dep at the 0.2.0
+# publish.
+zenavif-serialize = { version = "0.2.0", git = "https://github.com/imazen/zenavif-serialize", rev = "990bd6d025ece47da74cbd74c245302bd45bbf8e" }
 imgref = "1.12.0"
 # zenrav1e master (0.2.0, unpublished — crates.io tops out at 0.1.4) rather
 # than the registry, because 0.1.4 has no `FrameHints` /
