@@ -2,6 +2,15 @@
 
 ## [Unreleased]
 
+### Changed
+- `zenrav1e` (0.2.0, unpublished) is a git-rev dependency on imazen/zenrav1e
+  master (`e4883037`) instead of the sibling path `../../zenrav1e` (09a0dba3).
+  A path that escapes the repo made zenravif unresolvable for every git
+  consumer (zenavif main → zencodecs / zenpipe). Same compiled sources; the
+  wasm32 target dep carries the same rev. For sibling-lockstep work add an
+  uncommitted `[patch."https://github.com/imazen/zenrav1e"]` path override at
+  the workspace root.
+
 ### Added
 - Small-rendition effort mode behind `SpeedTweaks::SMALL_PX_RDO_TX_LIVE`
   (bae4880, byte-identical while `false`): when flipped, frames with long
