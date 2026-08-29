@@ -6,6 +6,17 @@ encoder by Kornel Lesiński, extended for the zenrav1e fork's still-image work.
 
 ## [Unreleased]
 
+### Fixed
+- **Pushes to `main` now cancel their superseded CI runs.** `ci.yml` keyed its
+  concurrency group on `${{ github.head_ref || github.run_id }}`.
+  `github.head_ref` is populated only for `pull_request` events, so on a push it
+  was empty and the group fell through to `github.run_id` — unique per run, so no
+  two pushes ever shared a group and `cancel-in-progress` could never fire. Every
+  push started a full matrix that ran to completion even when several commits
+  landed seconds apart. Now keyed on `${{ github.ref }}`, which is set for both
+  event types, so PR cancellation is unchanged and consecutive pushes supersede
+  each other.
+
 ### Changed
 - **rav1d-safe dev-dep pin `a6a7e232` → `66f58fa6`** (this commit), aligning
   this repo with the rev zenavif settled on so the workspace decodes AVIF
