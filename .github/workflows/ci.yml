@@ -1,5 +1,14 @@
 name: CI
 
+# HEADS UP: these `push` / `pull_request` triggers are correct but have never
+# once fired. Every run this repository has ever recorded (16 as of 2026-08-29)
+# has `event: workflow_dispatch` — somebody has been dispatching a run per
+# commit by hand. The cause is not in this file, and not anything the REST API
+# exposes: it is the one-time "I understand my workflows, go ahead and enable
+# them" acknowledgement that GitHub requires on a fork before automatic
+# triggers work, and imazen/cavif-rs is a fork of kornelski/cavif-rs. See the
+# "Known issues" entry in CHANGELOG.md for the full evidence and the exact
+# owner action. Do not "fix" the triggers below — they are already right.
 on:
   push:
     branches: [main, master, cooperative]

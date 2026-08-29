@@ -6,16 +6,70 @@ encoder by Kornel Lesiński, extended for the zenrav1e fork's still-image work.
 
 ## [Unreleased]
 
+### Known issues
+- **CI has never once run automatically in this repository — every run in its
+  history was started by hand.** All 16 workflow runs `imazen/cavif-rs` has ever
+  recorded carry `event: workflow_dispatch`; `GET /actions/runs?event=push`
+  returns `total_count: 0`, and the same holds for `pull_request`. Five pushes to
+  `main` on 2026-08-29 alone (`b1dbf4d7`, `8d9aecea`, `1c3ff1a2`, `fa877406`,
+  `bcccf725`) produced no run. Someone has been dispatching a run per commit,
+  which is why the repo *looks* covered.
+
+  This is **not** an in-repo defect — everything the repository controls is
+  already correct, and was verified on 2026-08-29:
+  - `.github/workflows/ci.yml` on `main` declares
+    `on: push: branches: [main, master, cooperative]` and the matching
+    `pull_request`; the file is present at the remote `main` (7444 bytes) and
+    the default branch is `main`.
+  - `GET /repos/imazen/cavif-rs/actions/permissions` →
+    `{"enabled": true, "allowed_actions": "all"}`.
+  - `GET /repos/imazen/cavif-rs/actions/workflows` → the one workflow, `CI`
+    (id `220533114`), is `state: "active"` — *not* `disabled_fork`,
+    `disabled_inactivity`, or `disabled_manually`.
+  - No rulesets (`/rulesets` → `[]`), no branch protection on `main`, repo not
+    archived or disabled, `default_workflow_permissions: "write"`.
+
+  What is left is repository-side and not exposed by the REST API. This repo is
+  a **fork** (of `kornelski/cavif-rs`), and GitHub suppresses automatic workflow
+  triggers on a fork until someone opens the repo's **Actions** tab and clicks
+  the one-time green **"I understand my workflows, go ahead and enable them"**
+  button. That is a UI-only action — there is no REST endpoint for it, and no
+  API field reports whether it has been taken, which is exactly why this went
+  unnoticed. Manual `workflow_dispatch` is unaffected by it, which matches what
+  the run history shows.
+
+  Supporting comparison across the org's other forks, all four of which report
+  the identical `permissions` + workflow `state` as this repo: `imazen/rust-rgb`
+  (fork) has 16 runs, all `push`; `imazen/mozjpeg` (fork) has 5 runs, all
+  `push`. So being a fork does not by itself block triggers — the difference is
+  per-repository, invisible to the API, and consistent with the acknowledgement
+  having been given there and not here.
+
+  **Owner action (UI only, ~10 seconds):** open
+  <https://github.com/imazen/cavif-rs/actions>. If the banner "Workflows aren't
+  being run on this forked repository" is present, click **"I understand my
+  workflows, go ahead and enable them."** Then push any commit and confirm a run
+  appears with `event: push`
+  (`gh api "repos/imazen/cavif-rs/actions/runs?event=push" --jq .total_count`
+  should become non-zero). If the banner is *absent*, the cause is something
+  else account- or org-side and worth raising with GitHub Support, because every
+  repository-level input has been ruled out above. Until then, treat a green
+  badge here as evidence only that somebody remembered to dispatch a run.
+
 ### Fixed
 - **Pushes to `main` now cancel their superseded CI runs.** `ci.yml` keyed its
   concurrency group on `${{ github.head_ref || github.run_id }}`.
   `github.head_ref` is populated only for `pull_request` events, so on a push it
   was empty and the group fell through to `github.run_id` — unique per run, so no
-  two pushes ever shared a group and `cancel-in-progress` could never fire. Every
-  push started a full matrix that ran to completion even when several commits
-  landed seconds apart. Now keyed on `${{ github.ref }}`, which is set for both
-  event types, so PR cancellation is unchanged and consecutive pushes supersede
-  each other.
+  two pushes ever shared a group and `cancel-in-progress` could never fire. Now
+  keyed on `${{ github.ref }}`, which is set for both event types, so PR
+  cancellation is unchanged and consecutive pushes supersede each other.
+
+  (Corrected 2026-08-29: this entry originally read "Every push started a full
+  matrix that ran to completion even when several commits landed seconds apart."
+  No push has ever started a matrix in this repository — see **Known issues**
+  above. The concurrency fix is still right, and becomes load-bearing the moment
+  automatic triggers are enabled; it just was not fixing an observed symptom.)
 
 ### Changed
 - **rav1d-safe dev-dep pin `a6a7e232` → `66f58fa6`** (this commit), aligning
