@@ -15,8 +15,10 @@ encoder by Kornel Lesiński, extended for the zenrav1e fork's still-image work.
   touches it, and no CI job compiles it (every job is `-p zenravif`).
   Measured before landing, not assumed —
   `benchmarks/rav1d_pin_66f58fa6_2026-08-29.tsv{.zst,.meta}`, 1200 cells per
-  arm (5 content classes × 64/256/1024/2048 × speeds 1,2,4,6,8,10 × q5..100
-  step 5), plus a repeat-run determinism control that differs in 0 rows:
+  arm — 5 content classes and q 5..100 step 5 throughout, in three blocks
+  (64/256/1024/2048 at speed 10; 64/256 at speeds 4,6,8; 64 at speeds 1,2),
+  1099 distinct encoded streams — plus a repeat-run determinism control on the
+  400-cell block that differs in 0 rows:
   - **`Settings::strictness` now defaults to `Strict`** (rav1d-safe@2e0f7e8):
     non-conforming streams return `Error::InvalidData` instead of being
     concealed. Both examples take that default. **0 newly-rejected streams**

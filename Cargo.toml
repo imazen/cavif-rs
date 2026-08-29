@@ -75,9 +75,11 @@ avif-parse = "2.0.0"
 #    (dav1d's strict_std_compliance checks plus the AV1 6.10.8 segment_id bound)
 #    as `Error::InvalidData` rather than concealing it. `Settings` is
 #    `#[non_exhaustive]`, so this is a behaviour change, not an API break.
-#    Measured on 1200 cells of zenravif's OWN output (5 content classes x
-#    64/256/1024/2048 x speeds 1,2,4,6,8,10 x q5..100 step 5): 0 newly-rejected
-#    streams — 1200 accepted before, 1200 accepted after, no DECFAIL either
+#    Measured on 1200 cells of zenravif's OWN output — 5 content classes and
+#    q 5..100 step 5 throughout, in three blocks (64/256/1024/2048 at speed 10;
+#    64/256 at speeds 4,6,8; 64 at speeds 1,2), 1099 distinct encoded streams:
+#    0 newly-rejected streams — 1200 accepted before, 1200 accepted after, no
+#    DECFAIL either
 #    side — and every `bytes`/`bpp`/`sha256` column identical, so the encoder
 #    output the harness scores is untouched. Strict is the right default here
 #    precisely BECAUSE the corpus is our own encoder's output: a stream
