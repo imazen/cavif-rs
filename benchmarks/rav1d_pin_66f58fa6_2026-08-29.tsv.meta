@@ -126,6 +126,20 @@ RESULT 4 — decoded pixels DO move on aarch64, and the old side was wrong
   are the guard/reservation and dispatch changes of the #455/#494 rounds, not
   kernel arithmetic, but this repo has not verified that claim by measurement.
 
+RESULT 5 — the 10-bit path does NOT move, across the WHOLE range
+  examples/hdr_pq10_probe (64x48 PQ10, Planes::Depth16) prints the same line at
+  a6a7e232 and at 66f58fa6:
+      q95 s8: max |D| = 1281, mean |D| = 47 (16-bit units), 1127 bytes
+  So the movement in RESULT 4 is the 8bpc intra path specifically, not the
+  decoder wholesale. That is consistent with what the campaign contains:
+  rav1d-safe@ddbe8ba's 16bpc repair is in the compound/prep MC kernels
+  (inter prediction), which an intra-only still never reaches, while
+  @ef01e85's itx eob/rect2 defects sit on the transform path a still DOES
+  use. It also says the 10/12-bit NEON inverse transforms ADDED in the range
+  (rav1d-safe@560f4ec) are bit-exact on this fixture rather than merely close.
+  One fixture, one size, one quality — narrow, but it is a measurement, and it
+  bounds the blast radius of the bump to 8bpc.
+
 CONSEQUENCE FOR THE EXISTING GATE-FLIP RECORD
   benchmarks/gate_flip_summary_2026-08-06.tsv.meta names
   `rav1d-safe a6a7e232f9cd (decode side only)` and was run on this same
