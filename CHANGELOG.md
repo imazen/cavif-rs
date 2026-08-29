@@ -7,6 +7,42 @@ encoder by Kornel Lesiński, extended for the zenrav1e fork's still-image work.
 ## [Unreleased]
 
 ### Changed
+- **rav1d-safe dev-dep pin `a6a7e232` → `66f58fa6`** (this commit), aligning
+  this repo with the rev zenavif settled on so the workspace decodes AVIF
+  through one decoder. Dev-only: rav1d-safe is a dev-dependency of the root
+  `cavif` package used by `examples/gate_sweep.rs` and
+  `examples/hdr_pq10_probe.rs`; nothing in the published `zenravif` crate
+  touches it, and no CI job compiles it (every job is `-p zenravif`).
+  Measured before landing, not assumed —
+  `benchmarks/rav1d_pin_66f58fa6_2026-08-29.tsv{.zst,.meta}`, 1200 cells per
+  arm (5 content classes × 64/256/1024/2048 × speeds 1,2,4,6,8,10 × q5..100
+  step 5), plus a repeat-run determinism control that differs in 0 rows:
+  - **`Settings::strictness` now defaults to `Strict`** (rav1d-safe@2e0f7e8):
+    non-conforming streams return `Error::InvalidData` instead of being
+    concealed. Both examples take that default. **0 newly-rejected streams**
+    — 1200 accepted before, 1200 after. Keeping Strict: the corpus here is
+    zenravif's own output, so a stream we emit that libaom would reject is an
+    encoder bug the harness should surface, not conceal.
+  - **Encoder output is untouched**: `bytes`, `bpp` and `sha256` identical on
+    all 1200 cells.
+  - **Decoded pixels move on aarch64, off a wrong decoder onto a correct
+    one.** 699/1200 cells score a different SSIMULACRA2 (mean |Δ| 0.039, max
+    0.61, 402 up / 297 down). Bisected: `a6a7e232 → 140f9145` moves 339/400
+    grid-A cells, `140f9145 → 66f58fa6` moves 0/400 — the whole movement is
+    the aarch64 NEON conformance campaign of 2026-08-07/08 (rav1d-safe
+    @ef01e85 itx eob/rect2-rounding +293 vectors, @ddbe8ba 16bpc PREP_BIAS +
+    `intermediate_bits` +91, 8bpc compound +80), which took rav1d-safe from
+    **302/766 to 766/766** against dav1d's published MD5s on aarch64.
+    x86_64 was already 766/766 and is unaffected.
+  - `Decoder::flush()` draining owed frames (rav1d-safe@59eb17b) does not
+    affect this repo — neither example calls it, and the `ctx.flush()` calls
+    in `src/{animated,av1encoder}.rs` are zenrav1e's *encoder* context.
+- **The SSIMULACRA2 column of `benchmarks/gate_flip_summary_2026-08-06.tsv`
+  is not comparable to post-bump runs on aarch64.** That record names
+  `rav1d-safe a6a7e232 (decode side only)` and was taken on an Apple M4 Pro,
+  i.e. through the pre-campaign decoder described above. Its bytes/BD-rate
+  half is unaffected (encoder output is byte-identical across the bump);
+  re-measure an ssim2 baseline on the new pin before the next gate flip.
 - **The zenrav1e dep-bump release gates are cashed in** (c69050a + this
   commit). The dep moved to zenrav1e master/0.2.0 in 619d81a, which is the
   condition four speed-table gates named, so `S1_DEEP_ARMS_LIVE`,

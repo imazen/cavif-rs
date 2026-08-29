@@ -44,7 +44,8 @@ opt-level = 2
 
 [dev-dependencies]
 avif-parse = "2.0.0"
-# `examples/gate_sweep.rs` only (the release-gate A/B harness): decode the
+# `examples/gate_sweep.rs` (the release-gate A/B harness) and
+# `examples/hdr_pq10_probe.rs` (the 10-bit PQ round-trip probe): both decode the
 # encoder's own output and score it, so a gate flip's effect on bytes AND
 # quality is measured rather than asserted. cavif is publish = false, so these
 # never reach a registry package.
@@ -53,7 +54,65 @@ avif-parse = "2.0.0"
 # decoding our own low-quality (LRF-on) encodes — measured here, see
 # benchmarks/gate_flip_composed_2026-08-06.tsv.meta. A git rev rather than the
 # sibling path so CI (which checks out this repo alone) can still resolve it.
-rav1d-safe = { git = "https://github.com/imazen/rav1d-safe", rev = "a6a7e232f9cdbf9c4baed393738fde7fb683afc8", default-features = false, features = ["bitdepth_8", "bitdepth_16"] }
+#
+# 2026-08-29, a6a7e232 -> 66f58fa6 (374 commits): aligns this pin with the rev
+# zenavif settled on, so the workspace decodes AVIF through one rav1d-safe.
+# What the range means for the two examples above, measured (not assumed) —
+# benchmarks/rav1d_pin_66f58fa6_2026-08-29.tsv{,.meta}:
+#  * rav1d-safe@3426ebf7 (rav1d-safe#524) — an intermittent DisjointMut overlap
+#    panic in the 8bpc x86_64 loop-filter H kernels, whose window was sized from
+#    the plane's worst case instead of the run's mask and so ran one column past
+#    the end of an unpadded picture row. A decoder crash, never wrong pixels.
+#    Both kernels now load only the bytes they consume, which is bit-identical
+#    by construction (the dropped lanes were read and discarded), and the
+#    SIMD-vs-scalar fallback predicate is unchanged, so the decision — and every
+#    output byte — is the same. x86_64-only: this repo's CI never compiles
+#    rav1d-safe (every job is `-p zenravif`), so that leg is untested here by
+#    construction, and the aarch64 evidence below cannot reach it.
+#  * rav1d-safe@2e0f7e8 — `Settings::strictness`, now defaulting to
+#    `Strictness::Strict`. Both examples build their decoder from
+#    `Settings::default()`, so both now reject what libaom rejects
+#    (dav1d's strict_std_compliance checks plus the AV1 6.10.8 segment_id bound)
+#    as `Error::InvalidData` rather than concealing it. `Settings` is
+#    `#[non_exhaustive]`, so this is a behaviour change, not an API break.
+#    Measured on 1200 cells of zenravif's OWN output (5 content classes x
+#    64/256/1024/2048 x speeds 1,2,4,6,8,10 x q5..100 step 5): 0 newly-rejected
+#    streams — 1200 accepted before, 1200 accepted after, no DECFAIL either
+#    side — and every `bytes`/`bpp`/`sha256` column identical, so the encoder
+#    output the harness scores is untouched. Strict is the right default here
+#    precisely BECAUSE the corpus is our own encoder's output: a stream
+#    zenravif emits that libaom would reject is a zenravif bug these harnesses
+#    should surface, not conceal. (`Strictness::Lenient` is the opt-out if a
+#    future harness ever needs to score deliberately-corrupt input; nothing
+#    here does.)
+#
+# The `ssim2` column DOES move, and that is the point of the bump on this
+# machine class. 699 of the 1200 cells score differently (mean |delta| 0.039,
+# max 0.61, 402 up / 297 down — a rounding-shaped change, not a quality
+# trend). Bisected on the 400-cell grid A: a6a7e232 -> 140f9145 moves 339/400
+# cells; 140f9145 -> 66f58fa6 moves 0/400. So the movement is entirely the
+# aarch64 NEON conformance campaign of 2026-08-07/08, which this repo had not
+# yet taken and which zenavif/zenmetrics absorbed on 2026-08-11:
+#   rav1d-safe@ef01e85 (itx: the 16x16 per-type eob thresholds and the
+#   16x32/32x16 rect2 roundings, +293 vectors), @ddbe8ba (mc: one PREP_BIAS
+#   convention at 16bpc and the hardcoded intermediate_bits, +91), and the
+#   8bpc compound kernels (+80). Upstream's set-diff-by-name record
+#   (rav1d-safe benchmarks/aarch64_md5_fixes_2026-08-07.meta) is
+#   302 PASS / 464 MISMATCH before, 766 PASS / 0 MISMATCH after, against
+#   dav1d's published MD5s, with 0 newly-failing at every step.
+# a6a7e232 is therefore the WRONG side on aarch64: it decoded 464 of 766
+# dav1d conformance vectors to the wrong pixels. The old numbers in
+# benchmarks/gate_flip_composed_2026-08-06.tsv.meta were scored through that
+# decoder on aarch64 hosts and should not be compared against post-bump runs
+# cell-for-cell; re-measure a baseline on this pin before the next gate flip.
+# x86_64 is unaffected by that campaign (it was already 766/766), so the
+# ssim2 movement is aarch64-only.
+#  * rav1d-safe@59eb17b — `Decoder::flush()` drains owed frames before it
+#    resets. Neither example calls it (each decodes one still from
+#    `primary_item` in a single `decode()`), and the `ctx.flush()` calls in
+#    `ravif/src/{animated,av1encoder}.rs` are zenrav1e's ENCODER context, an
+#    unrelated method. No effect on this repo.
+rav1d-safe = { git = "https://github.com/imazen/rav1d-safe", rev = "66f58fa6a64c689998721cc5cdb16a4698e26eec", default-features = false, features = ["bitdepth_8", "bitdepth_16"] }
 fast-ssim2 = { version = "0.8.2", features = ["imgref"] }
 zenresize = { version = "0.3.1", default-features = false, features = ["std"] }
 

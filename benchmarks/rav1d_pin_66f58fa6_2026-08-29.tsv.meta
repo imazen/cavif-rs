@@ -1,0 +1,143 @@
+rav1d_pin_66f58fa6 / 2026-08-29
+Exposure measurement for the rav1d-safe dev-dep bump
+a6a7e232f9cd -> 66f58fa6a64c (374 commits), taken BEFORE the pin landed.
+
+WHY THE BUMP
+  Three rav1d-safe git revs were live across the zen workspace: zenavif on
+  66f58fa6 (current main), this repo on a6a7e232 (2026-08-06), zenmetrics
+  resolving 140f9145 (2026-08-11). All three older revs predate
+  rav1d-safe@3426ebf7 (rav1d-safe#524), an intermittent DisjointMut overlap
+  panic in the 8bpc x86_64 loop-filter H kernels. Aligning on the rev zenavif
+  settled on means the workspace decodes AVIF through one decoder.
+
+WHAT USES rav1d-safe HERE
+  Nothing in the shipped crate. It is a dev-dependency of the root `cavif`
+  package, consumed by two examples that decode the encoder's own output:
+      examples/gate_sweep.rs       release-gate A/B harness (bytes + ssim2)
+      examples/hdr_pq10_probe.rs   10-bit PQ round-trip probe
+  Both build their decoder from `Settings::default()`; neither calls
+  `Decoder::flush()`. The `ctx.flush()` calls in ravif/src/{animated,
+  av1encoder}.rs are zenrav1e's ENCODER context, an unrelated method — so
+  rav1d-safe@59eb17b (flush drains owed frames before it resets) has no
+  effect on this repo.
+  NOTE: no CI job compiles rav1d-safe. Every job in .github/workflows/ci.yml
+  is `-p zenravif`, and the pin lives in the root package. CI resolves it,
+  never builds it. Everything below is LOCAL aarch64 evidence; the x86_64
+  legs of the range are not covered by any measurement in this repo.
+
+INSTRUMENT
+  examples/gate_sweep, dev profile (opt-level 1, deps opt-level 2), threads=1.
+  One row per (source, class, size, speed, quality) cell:
+  bytes / bpp are the encoder's; sha256 is over the encoded AVIF; ssim2 is
+  SSIMULACRA2 of the rav1d-safe decode against the resampled source. So a
+  single run separates "the encoder moved" (bytes/sha256) from "the decoder
+  moved" (ssim2 with bytes held fixed).
+
+GRID  (1200 cells per arm; workspace sweep discipline: four size tiers, q
+       density equal at low and high q, five content classes, six speeds)
+  A   sizes 64,256,1024,2048  speeds 10        q 5..100 step 5   400 cells
+  B   sizes 64,256            speeds 4,6,8     q 5..100 step 5   600 cells
+  C   size  64                speeds 1,2       q 5..100 step 5   200 cells
+  sources: clic2025 photo x2, gb82-sc screen / text_ui / lineart_ui
+  1099 distinct encoded streams across the 1200 cells.
+
+ARMS  (label column)
+  old    a6a7e232f9cd   the pin this repo was on
+  mid    140f9145 0c35  grid A only — the bisect midpoint (what zenmetrics
+                        resolved, and what zenavif ran from 08-11 to 08-29)
+  new    66f58fa6a64c   the pin landed by this commit
+  new2   66f58fa6a64c   grid A only — a REPEAT of `new`, the determinism
+                        control that makes the comparison meaningful
+
+RESULT 1 — determinism control
+  new vs new2, 400 cells: 0 rows differ in any column but enc_ms.
+  The harness is deterministic, so every difference below is real.
+
+RESULT 2 — Settings::strictness now defaults to Strict (rav1d-safe@2e0f7e8)
+  Non-conforming streams return Error::InvalidData instead of being
+  concealed. `Settings` is #[non_exhaustive], so this is a behaviour change,
+  not an API break, and both examples take the new default.
+  ACCEPT/REJECT, 1200 cells each arm:
+      old  1200 accepted / 0 rejected     (0 DECFAIL, 0 ENCFAIL, 0 NaN ssim2)
+      new  1200 accepted / 0 rejected     (0 DECFAIL, 0 ENCFAIL, 0 NaN ssim2)
+  Zero newly-rejected streams. Recommendation: keep Strict. The corpus these
+  harnesses decode is zenravif's OWN output, and a stream zenravif emits that
+  libaom would reject is a zenravif bug the harness should surface rather
+  than conceal — rav1d-safe#422 was found exactly that way, on a zenrav1e
+  chroma-TU desync that passed an encode->decode round trip. Lenient stays
+  available if a future harness needs to score deliberately-corrupt input;
+  nothing here does.
+
+RESULT 3 — encoder output is untouched
+  bytes, bpp and sha256 are identical on all 1200 cells across all arms.
+  0 differing rows in each of those three columns. As expected: nothing in
+  the range touches the encode side.
+
+RESULT 4 — decoded pixels DO move on aarch64, and the old side was wrong
+  ssim2, old vs new, 1200 cells: 699 differ (58.2%),
+      mean |delta| 0.039, max |delta| 0.610,
+      402 higher / 297 lower, mean signed delta +0.0024
+  — a rounding-shaped change, not a quality trend.
+
+  Bisected on grid A (400 cells):
+      a6a7e232 -> 140f9145  (278 commits)   339/400 differ (84.8%),
+                                            mean |d| 0.031, max |d| 0.334
+      140f9145 -> 66f58fa6  ( 96 commits)     0/400 differ
+      a6a7e232 -> 66f58fa6  (374 commits)   339/400 differ  (identical to the
+                                            first row — the whole movement is
+                                            in the first sub-range)
+
+  So the 96-commit range zenavif took on 2026-08-29 is bit-neutral here too,
+  independently confirmed on aarch64. The movement is entirely the aarch64
+  NEON conformance campaign of 2026-08-07/08, which this repo had not taken
+  and which zenavif/zenmetrics absorbed on 2026-08-11:
+      rav1d-safe@ef01e85  itx: the 16x16 per-type eob thresholds (dav1d gives
+                          H_DCT/V_DCT eob_half 8, not 36 — for eob in [8,36)
+                          the kernel skipped rows 8..15 that had real
+                          coefficients) and the 16x32/32x16 rect2 roundings
+                          the identity path collapsed to one shift.   +293
+      rav1d-safe@ddbe8ba  mc: the 16bpc compound seam ran TWO PREP_BIAS
+                          conventions at once, and intermediate_bits was a
+                          literal 4 instead of 14 - bitdepth.          + 91
+      8bpc compound (avg/w_avg/mask/w_mask)                            + 80
+
+  Upstream's set-diff-by-name record — rav1d-safe
+  benchmarks/aarch64_md5_fixes_2026-08-07.meta, against dav1d's published
+  MD5s over the 766 dav1d-test-data vectors — is
+      before  302 PASS / 464 MISMATCH
+      after   766 PASS /   0 MISMATCH
+  with 0 newly-failing at every intermediate step.
+
+  a6a7e232 is therefore the WRONG side on aarch64: it decoded 464 of 766
+  dav1d conformance vectors to the wrong pixels. The ssim2 movement measured
+  here is this repo's harness moving off a broken decoder, not onto one.
+  x86_64 was already 766/766 and is unaffected by that campaign.
+
+CONSEQUENCE FOR THE EXISTING GATE-FLIP RECORD
+  benchmarks/gate_flip_summary_2026-08-06.tsv.meta names
+  `rav1d-safe a6a7e232f9cd (decode side only)` and was run on this same
+  Apple M4 Pro. Its ssim2 numbers were therefore scored through the
+  pre-campaign aarch64 decoder. The bytes/BD-rate half of that record is
+  unaffected (encoder output is untouched, RESULT 3), but its ssim2 column
+  must NOT be compared cell-for-cell against any post-bump run. Re-measure a
+  baseline on this pin before the next gate flip.
+
+PROVENANCE
+  ravif           1a3d18b2 (this repo, main) + this commit
+  zenrav1e        e4883037553434efb57ecbf4414c8b49922ba3e4  (0.2.0, git)
+  rav1d-safe      a6a7e232f9cdbf9c4baed393738fde7fb683afc8  (old arm)
+                  140f91450c3551c25a5699d12ded6d629ecf6d97  (bisect midpoint)
+                  66f58fa6a64c689998721cc5cdb16a4698e26eec  (new arm)
+  fast-ssim2      0.8.2 (registry)   zenresize 0.3.1 (registry)
+  corpus          ../codec-corpus (clic2025/training, gb82-sc)
+  rustc           1.98.0 (88d9e12ae 2026-08-18)
+  host            Apple M4 Pro, arm64, macOS 26.5.2, 12 cores
+  every run under `nice -n 19`
+
+DATA
+  rav1d_pin_66f58fa6_2026-08-29.tsv.zst — 3200 rows, the four arms above.
+  Columns are gate_sweep's, with two edits to fit the repo's 30 KB budget:
+  `enc_ms` dropped (timing noise, not part of any claim) and `sha256`
+  truncated to a 12-char prefix — verified lossless for identity here, 1099
+  distinct prefixes for 1099 distinct full hashes.
+    label source class size width height speed quality bytes bpp ssim2 sha256_12
