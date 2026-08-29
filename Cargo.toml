@@ -107,8 +107,16 @@ avif-parse = "2.0.0"
 # benchmarks/gate_flip_composed_2026-08-06.tsv.meta were scored through that
 # decoder on aarch64 hosts and should not be compared against post-bump runs
 # cell-for-cell; re-measure a baseline on this pin before the next gate flip.
-# x86_64 is unaffected by that campaign (it was already 766/766), so the
-# ssim2 movement is aarch64-only.
+# Whether x86_64 moves across the same range was NOT measured here — this host
+# is aarch64 and cannot run those kernels. What is on the record: the campaign's
+# arithmetic fixes are in `_arm` kernels plus a few dispatcher lines
+# (`src/itx.rs`, `src/mc.rs`), its baseline of 302/766 is explicitly the aarch64
+# one, and rav1d-safe@04fafc2 — inside this range — measured x86_64 at
+# 766 PASS / 0 MISMATCH with the set-diff on (name, status, actual_md5) empty
+# across x86 t=1, x86 t=8, aarch64 t=1 and aarch64 t=8, i.e. identical pixels on
+# both architectures at the END of the range. That makes an x86_64 shift
+# unlikely, but it is an inference from upstream's records, not a measurement
+# taken here. Treat the ssim2 movement above as an aarch64 result.
 #  * rav1d-safe@59eb17b — `Decoder::flush()` drains owed frames before it
 #    resets. Neither example calls it (each decodes one still from
 #    `primary_item` in a single `decode()`), and the `ctx.flush()` calls in

@@ -111,7 +111,20 @@ RESULT 4 — decoded pixels DO move on aarch64, and the old side was wrong
   a6a7e232 is therefore the WRONG side on aarch64: it decoded 464 of 766
   dav1d conformance vectors to the wrong pixels. The ssim2 movement measured
   here is this repo's harness moving off a broken decoder, not onto one.
-  x86_64 was already 766/766 and is unaffected by that campaign.
+
+  x86_64 across the same range was NOT MEASURED — this host is aarch64 and
+  cannot run those kernels. Three things on the record make an x86_64 shift
+  unlikely, and they are inferences, not local results: the campaign's
+  arithmetic fixes live in `_arm` kernels plus a few dispatcher lines
+  (src/itx.rs, src/mc.rs); the 302/766 baseline is explicitly the aarch64 one
+  (the record is titled "aarch64 MD5 conformance"); and rav1d-safe@04fafc2,
+  inside this range, measured x86_64 at 766 PASS / 0 MISMATCH with the
+  set-diff on (name, status, actual_md5) empty across x86 t=1, x86 t=8,
+  aarch64 t=1 and aarch64 t=8 — identical pixels on both architectures at the
+  END of the range. Note the range DOES touch non-_arm safe_simd files
+  (cdef.rs, ipred.rs, loopfilter.rs, itx/part10_dispatch.rs, mod.rs); those
+  are the guard/reservation and dispatch changes of the #455/#494 rounds, not
+  kernel arithmetic, but this repo has not verified that claim by measurement.
 
 CONSEQUENCE FOR THE EXISTING GATE-FLIP RECORD
   benchmarks/gate_flip_summary_2026-08-06.tsv.meta names

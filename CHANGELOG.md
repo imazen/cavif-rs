@@ -35,7 +35,11 @@ encoder by Kornel Lesiński, extended for the zenrav1e fork's still-image work.
     @ef01e85 itx eob/rect2-rounding +293 vectors, @ddbe8ba 16bpc PREP_BIAS +
     `intermediate_bits` +91, 8bpc compound +80), which took rav1d-safe from
     **302/766 to 766/766** against dav1d's published MD5s on aarch64.
-    x86_64 was already 766/766 and is unaffected.
+    Whether x86_64 moves across the same range was **not measured** — this host
+    is aarch64. Upstream's records make it unlikely (the fixes are in `_arm`
+    kernels, the 302/766 baseline is the aarch64 one, and rav1d-safe@04fafc2
+    inside this range measured x86_64 at 766/766 with pixel-identical output to
+    aarch64), but that is an inference, not a local result.
   - `Decoder::flush()` draining owed frames (rav1d-safe@59eb17b) does not
     affect this repo — neither example calls it, and the `ctx.flush()` calls
     in `src/{animated,av1encoder}.rs` are zenrav1e's *encoder* context.
