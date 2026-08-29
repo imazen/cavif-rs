@@ -1,3 +1,62 @@
+!!! 2026-08-29 — PARTIALLY INVALIDATED. READ THIS BEFORE USING ANY NUMBER BELOW.
+!!!
+!!! This record was scored through rav1d-safe a6a7e232f9cd on an Apple M4 Pro,
+!!! i.e. on aarch64 on the WRONG SIDE of the aarch64 NEON conformance campaign
+!!! of 2026-08-07/08. At a6a7e232 that decoder reproduced 302 of 766
+!!! dav1d-test-data vectors and MISMATCHED the other 464; after the campaign it
+!!! is 766/766 (rav1d-safe benchmarks/aarch64_md5_fixes_2026-08-07.meta, a
+!!! set-diff by vector name, 0 newly-failing at every intermediate step). The
+!!! defects were real arithmetic errors in the NEON kernels — itx 16x16 per-type
+!!! eob thresholds and the 16x32/32x16 identity roundings (rav1d-safe@ef01e85),
+!!! and two mc compound families. The itx family sits on the transform path an
+!!! intra-only still image DOES use.
+!!!
+!!! WHAT IS INVALID — every column whose value passes through the decoder:
+!!!   * ssim2                                   (benchmarks/gate_flip_cells_2026-08-06.tsv.zst)
+!!!   * bd_rate_pct                             (this file's .tsv)
+!!!   * bytes_ratio_at_ssim2_{30,50,70,90}      (this file's .tsv)
+!!! bd_rate_pct and the bytes_ratio_* columns are NOT a decoder-independent
+!!! "bytes half": see METRIC below — they are bytes integrated/interpolated
+!!! OVER THE ssim2 AXIS, so they inherit that axis's error. Both arms were
+!!! decoded by the same wrong decoder, but the error is bitstream-dependent and
+!!! the two arms are different bitstreams, so it does not cancel. Do NOT compare
+!!! any of these five columns cell-for-cell against a post-2026-08-11 run.
+!!!
+!!! WHAT REMAINS VALID — nothing here is decoder-derived:
+!!!   * bytes, bpp, sha256, enc_ms              (cells)
+!!!   * cells, sha_identical                    (summary)
+!!!   * the whole BYTE-CHANGE LIVENESS table below
+!!!   * the SOLO ENCODE COST table below
+!!! Measured, not assumed: rav1d-safe a6a7e232 -> 66f58fa6 leaves bytes, bpp and
+!!! sha256 identical on all 1200 cells of every arm — nothing in the range
+!!! touches the encode side (benchmarks/rav1d_pin_66f58fa6_2026-08-29.tsv.meta,
+!!! RESULT 3).
+!!!
+!!! THE 10-BIT HDR TAIL SECTION IS ALSO VALID, and that is measured too, not
+!!! inferred: examples/hdr_pq10_probe prints the same line (q95 s8, max |D| 1281,
+!!! mean |D| 47, 1127 bytes) at a6a7e232 and at 66f58fa6 — the 10-bit path does
+!!! not move anywhere across the range (same record, RESULT 5). The campaign's
+!!! 16bpc repair is in the compound/prep MC kernels, which an intra-only still
+!!! never reaches.
+!!!
+!!! SIZE OF THE ERROR, measured on this same host and corpus: re-decoding a
+!!! 1200-cell grid at a6a7e232 vs the post-campaign pin moved 699 ssim2 values
+!!! (58.2%), mean |delta| 0.039, max |delta| 0.610 ssim2 points, 402 higher /
+!!! 297 lower — rounding-shaped, not a quality trend. Bisected, the entire
+!!! movement is in a6a7e232 -> 140f9145; 140f9145 -> 66f58fa6 moved 0 of 400.
+!!! So the five invalid columns are wrong by a small but non-zero and
+!!! non-cancelling amount, not by a constant offset you can correct out.
+!!!
+!!! THIS FILE IS NOT SUPERSEDED AND MUST NOT BE DELETED: it is still the only
+!!! record of the byte-level half of the 2026-08-06 gate flip, and of the
+!!! encode-cost and 10-bit tables. What it needs is an ssim2 baseline
+!!! re-measured on the current pin before the next gate flip, not removal.
+!!!
+!!! Corroborating record: benchmarks/rav1d_pin_66f58fa6_2026-08-29.tsv{.zst,.meta}.
+!!! Filename note: this file is named gate_flip_summary_2026-08-06.tsv.meta.
+!!! The "gate_flip_composed" on the next line is the run's title, not a filename;
+!!! no file of that name has ever existed.
+
 gate_flip_composed / 2026-08-06
 Cashing in the zenrav1e dep-bump release gates: a before/after of the ravif
 speed table with the gate consts off (baseline) vs on.

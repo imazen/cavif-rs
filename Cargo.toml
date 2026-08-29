@@ -52,7 +52,7 @@ avif-parse = "2.0.0"
 # Pinned git rev (0.6.0 staging), not registry 0.5.7: 0.5.7's aarch64 NEON
 # self-guided loop-restoration path panics with an out-of-bounds index while
 # decoding our own low-quality (LRF-on) encodes — measured here, see
-# benchmarks/gate_flip_composed_2026-08-06.tsv.meta. A git rev rather than the
+# benchmarks/gate_flip_summary_2026-08-06.tsv.meta. A git rev rather than the
 # sibling path so CI (which checks out this repo alone) can still resolve it.
 #
 # 2026-08-29, a6a7e232 -> 66f58fa6 (374 commits): aligns this pin with the rev
@@ -108,9 +108,15 @@ avif-parse = "2.0.0"
 #   dav1d's published MD5s, with 0 newly-failing at every step.
 # a6a7e232 is therefore the WRONG side on aarch64: it decoded 464 of 766
 # dav1d conformance vectors to the wrong pixels. The old numbers in
-# benchmarks/gate_flip_composed_2026-08-06.tsv.meta were scored through that
+# benchmarks/gate_flip_summary_2026-08-06.tsv.meta were scored through that
 # decoder on aarch64 hosts and should not be compared against post-bump runs
 # cell-for-cell; re-measure a baseline on this pin before the next gate flip.
+# That record now carries the notice as a banner at the top of its own .meta
+# (and a pointer .meta beside the compressed cells file), naming the five
+# invalid columns: `ssim2` plus the four that are computed OVER the ssim2 axis
+# — `bd_rate_pct` and `bytes_ratio_at_ssim2_{30,50,70,90}`. Its bytes/bpp/
+# sha256 columns, its byte-liveness and encode-cost tables, and its 10-bit HDR
+# tail are unaffected and measured so, not assumed.
 # Whether x86_64 moves across the same range was NOT measured here — this host
 # is aarch64 and cannot run those kernels. What is on the record: the campaign's
 # arithmetic fixes are in `_arm` kernels plus a few dispatcher lines

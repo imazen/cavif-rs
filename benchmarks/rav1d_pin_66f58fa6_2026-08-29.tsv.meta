@@ -144,10 +144,26 @@ CONSEQUENCE FOR THE EXISTING GATE-FLIP RECORD
   benchmarks/gate_flip_summary_2026-08-06.tsv.meta names
   `rav1d-safe a6a7e232f9cd (decode side only)` and was run on this same
   Apple M4 Pro. Its ssim2 numbers were therefore scored through the
-  pre-campaign aarch64 decoder. The bytes/BD-rate half of that record is
-  unaffected (encoder output is untouched, RESULT 3), but its ssim2 column
-  must NOT be compared cell-for-cell against any post-bump run. Re-measure a
-  baseline on this pin before the next gate flip.
+  pre-campaign aarch64 decoder and must NOT be compared cell-for-cell against
+  any post-bump run. That record now carries the full notice as a banner at
+  the top of its own .meta, and gate_flip_cells_2026-08-06.tsv.zst has a
+  pointer .meta beside it. Re-measure an ssim2 baseline on this pin before the
+  next gate flip.
+
+  CORRECTION (2026-08-29, same day): an earlier wording of this paragraph said
+  "the bytes/BD-rate half of that record is unaffected". The bytes half is;
+  BD-rate is NOT, and pairing the two words was wrong. That file's METRIC
+  section defines bd_rate_pct as log-rate integrated over the OVERLAPPING
+  ssim2 RANGE of a pareto front, and bytes_ratio_at_ssim2_N as a byte count
+  interpolated AT an ssim2 value. Both therefore read the ssim2 axis and
+  inherit its error. Both arms went through the same wrong decoder, but the
+  decode error is bitstream-dependent and the arms are different bitstreams,
+  so it does not cancel. Decoder-independent there: bytes, bpp, sha256,
+  enc_ms, sha_identical, the BYTE-CHANGE LIVENESS table and the SOLO ENCODE
+  COST table (RESULT 3 above measures bytes/bpp/sha256 identical across the
+  whole range on all 1200 cells). Its 10-BIT HDR TAIL section is also still
+  valid, and by measurement rather than by argument — RESULT 5 above prints
+  the same probe line at both ends of the range.
 
 PROVENANCE
   ravif           1a3d18b2 (this repo, main) + this commit

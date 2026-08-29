@@ -1,0 +1,23 @@
+gate_flip cells / 2026-08-06 — raw per-cell rows behind gate_flip_summary_2026-08-06.tsv
+
+!!! PARTIALLY INVALIDATED (2026-08-29). The `ssim2` column of this file was
+!!! scored through rav1d-safe a6a7e232f9cd on aarch64 — the WRONG side of the
+!!! aarch64 NEON conformance campaign of 2026-08-07/08, where that decoder
+!!! matched 302 of 766 dav1d-test-data vectors and mismatched the other 464.
+!!! Do NOT compare `ssim2` cell-for-cell against any run taken after
+!!! 2026-08-11. `bytes`, `bpp`, `sha256` and `enc_ms` are encoder-side and
+!!! remain valid — measured identical across the whole rev range on all 1200
+!!! cells of every arm.
+!!!
+!!! Full notice, including the measured size of the ssim2 error and which
+!!! summary columns inherit it (bd_rate_pct, bytes_ratio_at_ssim2_*):
+!!!   benchmarks/gate_flip_summary_2026-08-06.tsv.meta   (banner at the top)
+!!! Corroborating measurement:
+!!!   benchmarks/rav1d_pin_66f58fa6_2026-08-29.tsv.meta
+
+This file has its own .meta only so that the notice is reachable from the file
+a reader actually opens. Everything else about the run — provenance, harness,
+grid, metric, deviations — is in the summary's .meta; this is not a second
+record.
+
+Columns: arm source class size width height speed quality bytes bpp ssim2 sha256 enc_ms

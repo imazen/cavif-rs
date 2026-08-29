@@ -43,12 +43,36 @@ encoder by Kornel Lesiński, extended for the zenrav1e fork's still-image work.
   - `Decoder::flush()` draining owed frames (rav1d-safe@59eb17b) does not
     affect this repo — neither example calls it, and the `ctx.flush()` calls
     in `src/{animated,av1encoder}.rs` are zenrav1e's *encoder* context.
-- **The SSIMULACRA2 column of `benchmarks/gate_flip_summary_2026-08-06.tsv`
-  is not comparable to post-bump runs on aarch64.** That record names
-  `rav1d-safe a6a7e232 (decode side only)` and was taken on an Apple M4 Pro,
-  i.e. through the pre-campaign decoder described above. Its bytes/BD-rate
-  half is unaffected (encoder output is byte-identical across the bump);
-  re-measure an ssim2 baseline on the new pin before the next gate flip.
+- **The 2026-08-06 gate-flip record is annotated as decoder-invalidated on its
+  ssim2-derived columns, in the files themselves** (this commit) — a banner at
+  the top of `benchmarks/gate_flip_summary_2026-08-06.tsv.meta`, and a new
+  pointer `benchmarks/gate_flip_cells_2026-08-06.tsv.zst.meta` so the notice is
+  reachable from the compressed cells file a reader actually opens. That record
+  names `rav1d-safe a6a7e232 (decode side only)` and was taken on an Apple M4
+  Pro, i.e. through the pre-campaign decoder described above. **Not deleted**:
+  it remains the only record of the byte-level half of that gate flip.
+  - **Invalid — five columns, every one that reads the decoder:** `ssim2` (in
+    the cells file), and `bd_rate_pct` + `bytes_ratio_at_ssim2_{30,50,70,90}`
+    (in the summary). **Correcting an earlier wording of this entry**, which
+    said "its bytes/BD-rate half is unaffected": the bytes half is, BD-rate is
+    not. That record's own METRIC section defines `bd_rate_pct` as log-rate
+    integrated over the overlapping **ssim2** range of a pareto front and
+    `bytes_ratio_at_ssim2_N` as bytes interpolated **at** an ssim2 value, so
+    both inherit the ssim2 axis's error. Both arms used the same wrong decoder,
+    but the decode error is bitstream-dependent and the arms are different
+    bitstreams, so it does not cancel. (The summary `.tsv` has no plain `ssim2`
+    column at all — an earlier wording of this entry said it did.)
+  - **Still valid:** `bytes`, `bpp`, `sha256`, `enc_ms`, `sha_identical`, the
+    BYTE-CHANGE LIVENESS table and the SOLO ENCODE COST table — measured, not
+    assumed (bytes/bpp/sha256 are identical across the whole rev range on all
+    1200 cells of every arm). Its **10-BIT HDR TAIL** section is valid too, and
+    also by measurement: `examples/hdr_pq10_probe` prints the same line at both
+    ends of the range.
+  - Re-measure an ssim2 baseline on the new pin before the next gate flip.
+- **Two dangling filenames fixed** in the root `Cargo.toml` rav1d-pin note
+  (this commit): it cited `benchmarks/gate_flip_composed_2026-08-06.tsv.meta`
+  twice. No file of that name has ever existed —  `gate_flip_composed` is the
+  run's *title line*; the file is `gate_flip_summary_2026-08-06.tsv.meta`.
 - **The zenrav1e dep-bump release gates are cashed in** (c69050a + this
   commit). The dep moved to zenrav1e master/0.2.0 in 619d81a, which is the
   condition four speed-table gates named, so `S1_DEEP_ARMS_LIVE`,
@@ -63,11 +87,21 @@ encoder by Kornel Lesiński, extended for the zenrav1e fork's still-image work.
   `benchmarks/gate_flip_summary_2026-08-06.tsv` (+ the compressed raw cells
   and the `.meta`). Harness: `examples/gate_sweep.rs` (encode → decode via
   rav1d-safe → SSIMULACRA2, one row per cell; its q100 cells score exactly
-  100.0000, which pins the decode + full-range BT.601 inverse as exact).
+  100.0000, which pins the full-range BT.601 inverse as exact — but see the
+  caveat below: q100 exactness does **not** generalise to the low-q cells,
+  because the decoder defect this record was taken through fires on *sparse*
+  coefficient blocks, which q100 does not produce).
   Grid: 5 content classes (2 photo, screen, text/UI, line-art/UI) × long-edge
   {64, 256, 1024, 2048} × quality 5..100 step 5 (step 10 at 2048 and for the
   s1 rows) × speeds 1-10, ~9,500 encode+score cells. Metric is pareto-front
   SSIMULACRA2 BD-rate; negative = fewer bytes at matched quality.
+
+  ⚠️ **Every BD-rate number in this entry is decoder-invalidated** — it was
+  scored through rav1d-safe `a6a7e232` on aarch64, before the NEON conformance
+  campaign. Read the banner at the top of
+  `benchmarks/gate_flip_summary_2026-08-06.tsv.meta` before quoting any of
+  them. The byte-level claims in this entry (sha-identity, byte liveness,
+  encode cost) are unaffected and stand.
 
   **Shipped 4-arm config vs the pre-flip baseline (main grid, 64/256/1024,
   s4-s10, n=100 curves): median −2.9% BD-rate**, every speed row negative.

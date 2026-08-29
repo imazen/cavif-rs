@@ -1870,6 +1870,23 @@ pub(crate) struct SpeedTweaks {
 }
 
 impl SpeedTweaks {
+    // READ BEFORE RE-TUNING ANY GATE BELOW. Several of these consts cite
+    // `benchmarks/gate_flip_summary_2026-08-06.tsv` for their RD evidence.
+    // That record was scored through rav1d-safe a6a7e232 on aarch64 — the
+    // wrong side of the aarch64 NEON conformance campaign of 2026-08-07/08
+    // (302/766 dav1d vectors matching before it, 766/766 after). So its
+    // ssim2-derived columns are invalid: `ssim2` itself and, because they are
+    // integrated/interpolated over that axis, `bd_rate_pct` and
+    // `bytes_ratio_at_ssim2_*`. Any BD-rate percentage quoted below inherits
+    // that. What is NOT affected, and is measured rather than assumed: every
+    // byte-level claim (sha-identity, the "INERT at 64 px" byte-identity note
+    // on S1_DEEP_ARMS_LIVE, the byte-liveness and encode-cost tables) and the
+    // 10-bit HDR tail numbers on S6_TX_SIZE_RDO_LIVE — the 10-bit path was
+    // measured not to move anywhere across the rev range. Full notice: the
+    // banner at the top of `benchmarks/gate_flip_summary_2026-08-06.tsv.meta`;
+    // corroborating measurement: `benchmarks/rav1d_pin_66f58fa6_2026-08-29`.
+    // Re-measure an ssim2 baseline on the current pin before the next flip.
+
     /// Master switch for the speed-1 "deep" arms (mixed 3-way partitions,
     /// unconditional tx RDO, tuned partition range, deeper SPLIT trial).
     /// LIVE since the zenrav1e dep moved to master/0.2.0 (the knobs the deep
