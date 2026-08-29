@@ -58,7 +58,7 @@ avif-parse = "2.0.0"
 # 2026-08-29, a6a7e232 -> 66f58fa6 (374 commits): aligns this pin with the rev
 # zenavif settled on, so the workspace decodes AVIF through one rav1d-safe.
 # What the range means for the two examples above, measured (not assumed) —
-# benchmarks/rav1d_pin_66f58fa6_2026-08-29.tsv{,.meta}:
+# benchmarks/rav1d_pin_66f58fa6_2026-08-29.tsv{.zst,.meta}:
 #  * rav1d-safe@3426ebf7 (rav1d-safe#524) — an intermittent DisjointMut overlap
 #    panic in the 8bpc x86_64 loop-filter H kernels, whose window was sized from
 #    the plane's worst case instead of the run's mask and so ran one column past
@@ -79,14 +79,18 @@ avif-parse = "2.0.0"
 #    q 5..100 step 5 throughout, in three blocks (64/256/1024/2048 at speed 10;
 #    64/256 at speeds 4,6,8; 64 at speeds 1,2), 1099 distinct encoded streams:
 #    0 newly-rejected streams — 1200 accepted before, 1200 accepted after, no
-#    DECFAIL either
-#    side — and every `bytes`/`bpp`/`sha256` column identical, so the encoder
-#    output the harness scores is untouched. Strict is the right default here
-#    precisely BECAUSE the corpus is our own encoder's output: a stream
-#    zenravif emits that libaom would reject is a zenravif bug these harnesses
-#    should surface, not conceal. (`Strictness::Lenient` is the opt-out if a
-#    future harness ever needs to score deliberately-corrupt input; nothing
-#    here does.)
+#    DECFAIL on either side — and every `bytes`/`bpp`/`sha256` column identical,
+#    so the encoder output the harness scores is untouched. Strict is the right
+#    default here precisely BECAUSE the corpus is our own encoder's output: a
+#    stream zenravif emits that libaom would reject is a zenravif bug these
+#    harnesses should surface, not conceal. (`Strictness::Lenient` is the
+#    opt-out if a future harness ever needs to score deliberately-corrupt
+#    input; nothing here does.)
+#  * rav1d-safe@59eb17b — `Decoder::flush()` drains owed frames before it
+#    resets. Neither example calls it (each decodes one still from
+#    `primary_item` in a single `decode()`), and the `ctx.flush()` calls in
+#    `ravif/src/{animated,av1encoder}.rs` are zenrav1e's ENCODER context, an
+#    unrelated method. No effect on this repo.
 #
 # The `ssim2` column DOES move, and that is the point of the bump on this
 # machine class. 699 of the 1200 cells score differently (mean |delta| 0.039,
@@ -116,12 +120,7 @@ avif-parse = "2.0.0"
 # across x86 t=1, x86 t=8, aarch64 t=1 and aarch64 t=8, i.e. identical pixels on
 # both architectures at the END of the range. That makes an x86_64 shift
 # unlikely, but it is an inference from upstream's records, not a measurement
-# taken here. Treat the ssim2 movement above as an aarch64 result.
-#  * rav1d-safe@59eb17b — `Decoder::flush()` drains owed frames before it
-#    resets. Neither example calls it (each decodes one still from
-#    `primary_item` in a single `decode()`), and the `ctx.flush()` calls in
-#    `ravif/src/{animated,av1encoder}.rs` are zenrav1e's ENCODER context, an
-#    unrelated method. No effect on this repo.
+# taken here. Treat the ssim2 movement described here as an aarch64 result.
 rav1d-safe = { git = "https://github.com/imazen/rav1d-safe", rev = "66f58fa6a64c689998721cc5cdb16a4698e26eec", default-features = false, features = ["bitdepth_8", "bitdepth_16"] }
 fast-ssim2 = { version = "0.8.2", features = ["imgref"] }
 zenresize = { version = "0.3.1", default-features = false, features = ["std"] }
