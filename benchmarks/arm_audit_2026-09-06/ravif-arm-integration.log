@@ -1,0 +1,202 @@
+CARGO_BUILD_JOBS=4 RAYON_NUM_THREADS=4 OMP_NUM_THREADS=4 TMPDIR="$HOME/tmp" nice -n19 cargo clippy -p zenravif --no-default-features --features threading --all-targets -- -D warnings
+    Checking zenravif v0.2.0 (/Users/lilith/work/zen/ravif/ravif)
+    Finished `dev` profile [optimized + debuginfo] target(s) in 0.60s
+CARGO_BUILD_JOBS=4 RAYON_NUM_THREADS=4 OMP_NUM_THREADS=4 RUST_TEST_THREADS=4 TMPDIR="$HOME/tmp" nice -n19 cargo test -p zenravif
+    Finished `test` profile [optimized + debuginfo] target(s) in 0.10s
+     Running unittests src/lib.rs (target/debug/deps/zenravif-c964da79b61db4a3)
+
+running 23 tests
+test dirtyalpha::preminmax ... ok
+test cancel::tests::test_cancellation_token ... ok
+test cancel::tests::test_cancellation_token_clone ... ok
+test encode8_opaque ... ok
+test encode_420_odd_dimensions ... ok
+test encode_420_rgb_rejected ... ok
+test encode_420_smaller_than_444 ... ok
+test hdr10_full_pipeline ... ok
+test hlg_display_p3_signals_correct_cicp ... ok
+test limited_range_signals_correctly ... ok
+test pq_bt2020_signals_correct_cicp ... ok
+test encode8_cleans_alpha ... ok
+test test_cancellation_token_precancelled ... ok
+test test_libavif_quality_produces_expected_quantizers ... ok
+test test_no_cancellation_token_works_normally ... ok
+test test_timeout_and_cancellation_token_together ... ok
+test test_timeout_does_not_expire ... ok
+test test_timeout_expires ... ok
+test twelve_bit_depth_encodes ... ok
+test twelve_bit_rgba_encodes ... ok
+test test_cancellation_token_during_encoding ... ok
+test encode8_with_alpha ... ok
+test default_encoder_omits_colr_box ... ok
+
+test result: ok. 23 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 15.28s
+
+     Running tests/frame_hints_live.rs (target/debug/deps/frame_hints_live-5961c31895b41a0c)
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running tests/gray_encode.rs (target/debug/deps/gray_encode-031ef2515e291c03)
+
+running 3 tests
+test gray8_encodes_true_monochrome_av1 ... ok
+test gray8_ten_bit_output_widens_depth ... ok
+test gray8_odd_dimensions ... ok
+
+test result: ok. 3 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.01s
+
+     Running tests/pixel_cap.rs (target/debug/deps/pixel_cap-1b8f152d616922fd)
+
+running 5 tests
+test oversized_dimensions_rejected_preflight_by_default ... ok
+test custom_cap_below_default_rejects_between ... ok
+test rav1e_error_reason_is_preserved_not_a_fixed_string ... ok
+test small_image_under_cap_encodes_ok ... ok
+test opt_out_zero_allows_oversized_declaration ... ok
+
+test result: ok. 5 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.06s
+
+     Running tests/validate.rs (target/debug/deps/validate-654e6714c5d640f8)
+
+running 18 tests
+test alpha_quality_out_of_range_rejected ... ok
+test happy_path_typical_config_validates_ok ... ok
+test happy_path_libavif_quality_validates_ok ... ok
+test happy_path_default_validates_ok ... ok
+test libavif_quality_out_of_range_rejected ... ok
+test mirror_above_range_rejected ... ok
+test mirror_in_range_validates_ok ... ok
+test num_threads_none_validates_ok ... ok
+test num_threads_zero_rejected ... ok
+test quality_above_range_rejected ... ok
+test quality_below_range_rejected ... ok
+test rotation_above_range_rejected ... ok
+test rotation_in_range_validates_ok ... ok
+test speed_above_range_rejected ... ok
+test speed_zero_rejected ... ok
+test yuv420_plus_rgb_rejected ... ok
+test yuv420_plus_ycbcr_validates_ok ... ok
+test yuv444_plus_rgb_validates_ok ... ok
+
+test result: ok. 18 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+   Doc-tests zenravif
+
+running 11 tests
+test ravif/src/av1encoder.rs - av1encoder::Encoder<'_>::encode_rgb (line 1144) ... ignored
+test ravif/src/av1encoder.rs - av1encoder::Encoder<'_>::encode_rgb (line 1150) ... ignored
+test ravif/src/av1encoder.rs - av1encoder::Encoder<'_>::encode_rgba (line 1054) ... ignored
+test ravif/src/av1encoder.rs - av1encoder::Encoder<'_>::encode_rgba (line 1060) ... ignored
+test ravif/src/av1encoder.rs - av1encoder::Encoder<'exif_slice>::validate (line 916) ... ok
+test ravif/src/av1encoder.rs - av1encoder::Encoder<'exif_slice>::with_timeout (line 633) ... ok
+test ravif/src/cancel.rs - cancel::CancellationToken (line 10) ... ok
+test ravif/src/av1encoder.rs - av1encoder::Encoder<'exif_slice>::with_max_pixels (line 508) ... ok
+test ravif/src/lib.rs - (line 21) ... ok
+test ravif/src/lib.rs - (line 60) ... ok
+test ravif/src/lib.rs - (line 36) ... ok
+
+test result: ok. 7 passed; 0 failed; 4 ignored; 0 measured; 0 filtered out; finished in 0.01s
+
+all doctests ran in 0.44s; merged doctests compilation took 0.21s
+CARGO_BUILD_JOBS=4 RAYON_NUM_THREADS=4 OMP_NUM_THREADS=4 RUST_TEST_THREADS=4 TMPDIR="$HOME/tmp" nice -n19 cargo test -p zenravif --no-default-features --features threading
+   Compiling zenravif v0.2.0 (/Users/lilith/work/zen/ravif/ravif)
+    Finished `test` profile [optimized + debuginfo] target(s) in 1.64s
+     Running unittests src/lib.rs (target/debug/deps/zenravif-41338f4de6c4a0b3)
+
+running 23 tests
+test cancel::tests::test_cancellation_token ... ok
+test cancel::tests::test_cancellation_token_clone ... ok
+test dirtyalpha::preminmax ... ok
+test encode8_opaque ... ok
+test encode_420_odd_dimensions ... ok
+test encode_420_rgb_rejected ... ok
+test encode_420_smaller_than_444 ... ok
+test hdr10_full_pipeline ... ok
+test hlg_display_p3_signals_correct_cicp ... ok
+test limited_range_signals_correctly ... ok
+test pq_bt2020_signals_correct_cicp ... ok
+test encode8_with_alpha ... ok
+test test_cancellation_token_precancelled ... ok
+test test_libavif_quality_produces_expected_quantizers ... ok
+test test_no_cancellation_token_works_normally ... ok
+test test_timeout_and_cancellation_token_together ... ok
+test test_timeout_does_not_expire ... ok
+test test_timeout_expires ... ok
+test twelve_bit_depth_encodes ... ok
+test twelve_bit_rgba_encodes ... ok
+test test_cancellation_token_during_encoding ... ok
+test encode8_cleans_alpha ... ok
+test default_encoder_omits_colr_box ... ok
+
+test result: ok. 23 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 29.80s
+
+     Running tests/frame_hints_live.rs (target/debug/deps/frame_hints_live-2176f4189bbec4cf)
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running tests/gray_encode.rs (target/debug/deps/gray_encode-130e08a117f549c4)
+
+running 3 tests
+test gray8_encodes_true_monochrome_av1 ... ok
+test gray8_ten_bit_output_widens_depth ... ok
+test gray8_odd_dimensions ... ok
+
+test result: ok. 3 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.02s
+
+     Running tests/pixel_cap.rs (target/debug/deps/pixel_cap-c2aef634045a5c09)
+
+running 5 tests
+test custom_cap_below_default_rejects_between ... ok
+test oversized_dimensions_rejected_preflight_by_default ... ok
+test rav1e_error_reason_is_preserved_not_a_fixed_string ... ok
+test small_image_under_cap_encodes_ok ... ok
+test opt_out_zero_allows_oversized_declaration ... ok
+
+test result: ok. 5 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.05s
+
+     Running tests/validate.rs (target/debug/deps/validate-098b1f44a6af026b)
+
+running 18 tests
+test happy_path_libavif_quality_validates_ok ... ok
+test alpha_quality_out_of_range_rejected ... ok
+test happy_path_default_validates_ok ... ok
+test happy_path_typical_config_validates_ok ... ok
+test libavif_quality_out_of_range_rejected ... ok
+test mirror_above_range_rejected ... ok
+test mirror_in_range_validates_ok ... ok
+test num_threads_none_validates_ok ... ok
+test num_threads_zero_rejected ... ok
+test quality_above_range_rejected ... ok
+test quality_below_range_rejected ... ok
+test rotation_above_range_rejected ... ok
+test rotation_in_range_validates_ok ... ok
+test speed_above_range_rejected ... ok
+test speed_zero_rejected ... ok
+test yuv420_plus_rgb_rejected ... ok
+test yuv420_plus_ycbcr_validates_ok ... ok
+test yuv444_plus_rgb_validates_ok ... ok
+
+test result: ok. 18 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+   Doc-tests zenravif
+
+running 11 tests
+test ravif/src/av1encoder.rs - av1encoder::Encoder<'_>::encode_rgb (line 1144) ... ignored
+test ravif/src/av1encoder.rs - av1encoder::Encoder<'_>::encode_rgb (line 1150) ... ignored
+test ravif/src/av1encoder.rs - av1encoder::Encoder<'_>::encode_rgba (line 1054) ... ignored
+test ravif/src/av1encoder.rs - av1encoder::Encoder<'_>::encode_rgba (line 1060) ... ignored
+test ravif/src/av1encoder.rs - av1encoder::Encoder<'exif_slice>::validate (line 916) ... ok
+test ravif/src/av1encoder.rs - av1encoder::Encoder<'exif_slice>::with_timeout (line 633) ... ok
+test ravif/src/cancel.rs - cancel::CancellationToken (line 10) ... ok
+test ravif/src/av1encoder.rs - av1encoder::Encoder<'exif_slice>::with_max_pixels (line 508) ... ok
+test ravif/src/lib.rs - (line 21) ... ok
+test ravif/src/lib.rs - (line 36) ... ok
+test ravif/src/lib.rs - (line 60) ... ok
+
+test result: ok. 7 passed; 0 failed; 4 ignored; 0 measured; 0 filtered out; finished in 0.02s
+
+all doctests ran in 0.37s; merged doctests compilation took 0.15s
