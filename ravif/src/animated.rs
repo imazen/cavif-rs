@@ -131,7 +131,7 @@ impl crate::Encoder<'_> {
             frames.len(),
             |frame_idx, rav1e_frame| {
                 let f = &frames[frame_idx];
-                fill_frame_rgba8_color_420(rav1e_frame, width, height, f.rgba)?;
+                fill_frame_rgba8_color_420(rav1e_frame, width, height, f.rgba, self.premultiplied_alpha)?;
                 Ok(())
             },
             false,
@@ -226,7 +226,7 @@ impl crate::Encoder<'_> {
             frames.len(),
             |frame_idx, rav1e_frame| {
                 let f = &frames[frame_idx];
-                fill_frame_rgba16_color_420(rav1e_frame, width, height, f.rgba)?;
+                fill_frame_rgba16_color_420(rav1e_frame, width, height, f.rgba, self.premultiplied_alpha)?;
                 Ok(())
             },
             false,
@@ -509,7 +509,9 @@ fn assemble_animation(
     if alpha_frames.is_some() {
         anim.set_alpha_config(make_av1c_config(true, bit_depth));
     }
-    let avif_file = anim.serialize(width as u32, height as u32, &frames, &color_seq_header, alpha_seq_header.as_deref());
+    enc.configure_animation_metadata(&mut anim, alpha_frames.is_some());
+    let avif_file = anim.try_serialize(width as u32, height as u32, &frames, &color_seq_header, alpha_seq_header.as_deref())
+        .map_err(|e| e.map_error(|e| Error::SerializationError(e.to_string())))?;
 
     Ok(EncodedAnimation {
         avif_file,
@@ -586,6 +588,7 @@ fn fill_frame_rgba8_color_420(
     width: usize,
     height: usize,
     img: ImgRef<'_, RGBA8>,
+    premultiplied: bool,
 ) -> core::result::Result<(), Error> {
     let chroma_width = width.div_ceil(2);
     let chroma_height = height.div_ceil(2);
@@ -608,6 +611,10 @@ fn fill_frame_rgba8_color_420(
 
         for (col_idx, y_out) in y_row.iter_mut().enumerate() {
             let px = img[(col_idx, row_idx)];
+            let px = if premultiplied {
+                let multiply = |v| ((u32::from(v) * u32::from(px.a) + 127) / 255) as u8;
+                RGBA8::new(multiply(px.r), multiply(px.g), multiply(px.b), px.a)
+            } else { px };
             let yv = BT601[0] * f32::from(px.r) + BT601[1] * f32::from(px.g) + BT601[2] * f32::from(px.b);
             *y_out = yv.round().clamp(0.0, 255.0) as u8;
 
@@ -731,6 +738,7 @@ fn fill_frame_rgba16_color_420(
     width: usize,
     height: usize,
     img: ImgRef<'_, rgb::RGBA<u16>>,
+    premultiplied: bool,
 ) -> core::result::Result<(), Error> {
     let chroma_width = width.div_ceil(2);
     let chroma_height = height.div_ceil(2);
@@ -753,6 +761,10 @@ fn fill_frame_rgba16_color_420(
 
         for (col_idx, y_out) in y_row.iter_mut().enumerate() {
             let px = img[(col_idx, row_idx)];
+            let px = if premultiplied {
+                let multiply = |v| ((u32::from(v) * u32::from(px.a) + 511) / 1023) as u16;
+                rgb::RGBA::<u16>::new(multiply(px.r), multiply(px.g), multiply(px.b), px.a)
+            } else { px };
             let r = f64::from(px.r);
             let g = f64::from(px.g);
             let b = f64::from(px.b);

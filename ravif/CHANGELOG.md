@@ -2,6 +2,13 @@
 
 ## [Unreleased]
 
+### Animation metadata correction (2026-09-07)
+
+- Preserve configured ICC, Exif, XMP, rotation, mirror, CICP, CLLI and MDCV on animation color tracks and posters, using the canonical serializer at `98c8a501`.
+- Premultiply animation color samples before conversion when requested, at both 8 and 10 bits, and signal the matching alpha association. Input remains unassociated RGBA.
+- Use checked animation serialization and retain its failure reason in `SerializationError`; invalid metadata is not silently masked by unchecked output.
+
+
 ### Changed
 - `zenrav1e` (0.2.0, unpublished) is a git-rev dependency on imazen/zenrav1e
   master (`e4883037`) instead of the sibling path `../../zenrav1e` (09a0dba3).

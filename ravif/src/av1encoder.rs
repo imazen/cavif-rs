@@ -213,8 +213,8 @@ pub struct Encoder<'exif_slice> {
     pub(crate) libavif_quality_input: Option<f32>,
     /// rav1e preset 1 (slow) 10 (fast but crappy)
     pub(crate) speed: u8,
-    /// True if RGBA input has already been premultiplied. It inserts appropriate metadata.
-    premultiplied_alpha: bool,
+    /// Whether output color data is premultiplied and signals that association.
+    pub(crate) premultiplied_alpha: bool,
     /// Which pixel format to use in AVIF file. RGB tends to give larger files.
     color_model: ColorModel,
     /// How many threads should be used (0 = match core count), None - use global rayon thread pool
@@ -246,9 +246,9 @@ pub struct Encoder<'exif_slice> {
     pub(crate) mastering_display: Option<MasteringDisplay>,
     /// HDR content light level metadata (CEA-861.3)
     pub(crate) content_light: Option<ContentLight>,
-    /// Image rotation (counter-clockwise degrees: 0, 90, 180, 270)
+    /// Image rotation as counter-clockwise quarter turns: 0..=3.
     rotation: Option<u8>,
-    /// Image mirror axis (0 = vertical/left-right, 1 = horizontal/top-bottom)
+    /// Image mirror axis (0 exchanges top/bottom, 1 exchanges left/right).
     mirror: Option<u8>,
     /// ICC color profile
     icc_profile: Option<Vec<u8>>,
@@ -715,7 +715,7 @@ impl<'exif_slice> Encoder<'exif_slice> {
 
     /// Set image rotation in the AVIF container.
     ///
-    /// Angle is counter-clockwise in degrees: 0, 90, 180, or 270.
+    /// Angle is a count of counter-clockwise quarter turns: 0, 1, 2, or 3.
     #[inline(always)]
     #[must_use]
     pub fn with_rotation(mut self, angle: u8) -> Self {
@@ -725,7 +725,7 @@ impl<'exif_slice> Encoder<'exif_slice> {
 
     /// Set image mirror axis in the AVIF container.
     ///
-    /// `0` = vertical axis (left-right flip), `1` = horizontal axis (top-bottom flip).
+    /// `0` exchanges top and bottom; `1` exchanges left and right.
     #[inline(always)]
     #[must_use]
     pub fn with_mirror(mut self, axis: u8) -> Self {
@@ -1110,6 +1110,31 @@ impl Encoder<'_> {
                 let alpha = buffer.pixels().map(|px| to_twelve(px.a));
                 self.encode_raw_planes_12_bit(width, height, planes, Some(alpha), pixel_range, matrix_coefficients).at()
             },
+        }
+    }
+
+    /// Configure the animation container from the same metadata as stills.
+    /// The current animation pixel path codes full-range BT.601 YCbCr.
+    pub(crate) fn configure_animation_metadata(&self, image: &mut zenavif_serialize::animated::AnimatedImage, has_alpha: bool) {
+        image.set_color_description(
+            self.color_primaries.unwrap_or(ColorPrimaries::BT709) as u16,
+            self.transfer_characteristics.unwrap_or(TransferCharacteristics::SRGB) as u16,
+            MatrixCoefficients::BT601 as u16, true,
+        );
+        image.set_premultiplied_alpha(has_alpha && self.premultiplied_alpha);
+        if let Some(exif) = &self.exif { image.set_exif(exif.to_vec()); }
+        if let Some(icc) = &self.icc_profile { image.set_icc_profile(icc.clone()); }
+        if let Some(xmp) = &self.xmp { image.set_xmp(xmp.clone()); }
+        if let Some(rotation) = self.rotation { image.set_rotation(rotation); }
+        if let Some(mirror) = self.mirror { image.set_mirror(mirror); }
+        if let Some(cl) = self.content_light {
+            image.set_clli(zenavif_serialize::ClliBox::new(cl.max_content_light_level, cl.max_frame_average_light_level));
+        }
+        if let Some(md) = self.mastering_display {
+            image.set_mdcv(zenavif_serialize::MdcvBox::new(
+                [(md.primaries[0].x, md.primaries[0].y), (md.primaries[1].x, md.primaries[1].y), (md.primaries[2].x, md.primaries[2].y)],
+                (md.white_point.x, md.white_point.y), md.max_luminance, md.min_luminance,
+            ));
         }
     }
 

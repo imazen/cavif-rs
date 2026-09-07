@@ -6,6 +6,13 @@ encoder by Kornel Lesiński, extended for the zenrav1e fork's still-image work.
 
 ## [Unreleased]
 
+### Animation metadata correction (2026-09-07)
+
+- Preserve configured ICC, Exif, XMP, rotation, mirror, CICP, CLLI and MDCV on animation color tracks and posters, using the canonical serializer at `98c8a501`.
+- Premultiply animation color samples before conversion when requested, at both 8 and 10 bits, and signal the matching alpha association. Input remains unassociated RGBA.
+- Use checked animation serialization and retain its failure reason in `SerializationError`; invalid metadata is not silently masked by unchecked output.
+
+
 ### Known issues
 - **CI has never once run automatically in this repository — every run in its
   history was started by hand.** All 16 workflow runs `imazen/cavif-rs` has ever
