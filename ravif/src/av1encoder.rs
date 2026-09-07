@@ -588,6 +588,15 @@ impl<'exif_slice> Encoder<'exif_slice> {
         self.exif = Some(exif_data.into());
     }
 
+    pub(crate) fn animation_control(&self) -> crate::animated::AnimationControl {
+        crate::animated::AnimationControl {
+            cancellation_token: self.cancellation_token.clone(),
+            deadline: self.timeout.and_then(|t| std::time::Instant::now().checked_add(t)),
+            #[cfg(feature = "stop")]
+            stop_token: self.stop_token.clone(),
+        }
+    }
+
     /// Set a cancellation token for interrupting encoding
     ///
     /// The encoder checks the token on every packet iteration (~5-15ns overhead per check)

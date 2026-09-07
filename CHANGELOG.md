@@ -6,6 +6,11 @@ encoder by Kornel Lesiński, extended for the zenrav1e fork's still-image work.
 
 ## [Unreleased]
 
+### Animation cancellation correction (2026-09-07)
+
+- Honor cancellation tokens and one shared timeout across animation preparation, color/alpha tracks and serialization. With the `stop` feature, forward the combined control to zenrav1e's per-superblock checks and preserve `Error::Cancelled`.
+- Enabled regressions cover all four input formats; removing backend forwarding makes the per-superblock test fail. See `benchmarks/animation_cancellation_2026-09-07.md`.
+
 ### Fast-preset mode search correction (2026-09-07)
 
 - Restore the preset's full intra-mode search at speeds 9/10 while retaining CDEF and transform-domain choices. The former one-candidate cap made the shipped tune's photo/q35 result larger and lower-quality than the original budget.
