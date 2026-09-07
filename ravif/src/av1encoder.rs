@@ -1145,16 +1145,8 @@ impl Encoder<'_> {
             AlphaColorMode::Premultiplied => {
                 let prem = in_buffer.pixels()
                     .map(|px| {
-                        if px.a == 0 || px.a == 255 {
-                            RGBA8::default()
-                        } else {
-                            RGBA8::new(
-                                (u16::from(px.r) * 255 / u16::from(px.a)) as u8,
-                                (u16::from(px.g) * 255 / u16::from(px.a)) as u8,
-                                (u16::from(px.b) * 255 / u16::from(px.a)) as u8,
-                                px.a,
-                            )
-                        }
+                        let premultiply = |v: u8| ((u16::from(v) * u16::from(px.a) + 127) / 255) as u8;
+                        RGBA8::new(premultiply(px.r), premultiply(px.g), premultiply(px.b), px.a)
                     })
                     .collect();
                 Some(ImgVec::new(prem, in_buffer.width(), in_buffer.height()))

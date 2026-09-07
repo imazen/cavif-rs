@@ -2,6 +2,11 @@
 
 ## [Unreleased]
 
+### Still premultiplication correction (2026-09-07)
+
+- Associate RGB by multiplying by alpha before still encoding. Opaque pixels retain their color and alpha; fully transparent pixels clear only color. Previously the premultiplied path divided partial-alpha RGB and made opaque pixels transparent.
+- Decoded-pixel regression evidence is recorded in `benchmarks/still_premultiplication_2026-09-07.md`.
+
 ### Animation metadata correction (2026-09-07)
 
 - Preserve configured ICC, Exif, XMP, rotation, mirror, CICP, CLLI and MDCV on animation color tracks and posters, using the canonical serializer at `98c8a501`.
