@@ -2,6 +2,10 @@
 
 ## [Unreleased]
 
+### Exact animation timing (2026-09-07)
+
+- Add `TimedAnimFrame` and four timed RGB/RGBA animation entry points with exact timescale ticks, alpha timing, checked totals and exact result fields; preserve the millisecond APIs. See `benchmarks/animation_timing_2026-09-07.md`.
+
 ### Animation quantizer hints (2026-09-07)
 
 - Forward the configured superblock quantizer map on every animation color submission, preserving neutral-map and alpha bytes; backend application remains intra-only. See `benchmarks/animation_hints_2026-09-07.md`.
