@@ -588,6 +588,21 @@ impl<'exif_slice> Encoder<'exif_slice> {
         self.exif = Some(exif_data.into());
     }
 
+    pub(crate) fn animation_speed(&self, quantizer: u8, max_dimension: usize, is_alpha: bool) -> SpeedTweaks {
+        #[cfg_attr(not(feature = "imazen"), allow(unused_mut))]
+        let mut speed = SpeedTweaks::from_my_preset(self.speed, quantizer, max_dimension);
+        // Match the still-image policy: explicit color filter overrides do
+        // not change the independently configured monochrome alpha track.
+        #[cfg(feature = "imazen")]
+        if !is_alpha {
+            if let Some(value) = self.override_cdef { speed.cdef = Some(value); }
+            if let Some(value) = self.override_lrf { speed.lrf = Some(value); }
+        }
+        #[cfg(not(feature = "imazen"))]
+        let _ = is_alpha;
+        speed
+    }
+
     pub(crate) fn configure_animation_threads(&self, config: Config) -> Config {
         match self.threads {
             Some(0) => config.with_threads(rayon::current_num_threads()),

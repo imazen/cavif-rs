@@ -6,6 +6,11 @@ encoder by Kornel Lesiński, extended for the zenrav1e fork's still-image work.
 
 ## [Unreleased]
 
+### Animation filter forwarding (2026-09-07)
+
+- Apply explicit color CDEF and loop-restoration overrides in animation encoding, preserving the independent alpha policy. Packet regressions and ten independently decoded streams cover both coding depths; see `benchmarks/animation_filters_2026-09-07.md`.
+
+
 ### Animation thread forwarding (2026-09-07)
 
 - Apply the requested thread-pool size to animation color and alpha encoding, matching still-image settings. Verified live worker counts and byte-identical two-frame output across thread settings; see `benchmarks/animation_threads_2026-09-07.md`.

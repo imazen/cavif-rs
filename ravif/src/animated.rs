@@ -3,7 +3,6 @@
 //! Encodes a sequence of frames into an animated AVIF file using
 //! rav1e's video encoding mode and a minimal ISOBMFF muxer.
 
-use crate::av1encoder::SpeedTweaks;
 use crate::error::Error;
 use crate::Result;
 use whereat::{at, ResultAtExt as _};
@@ -349,7 +348,7 @@ fn encode_sequence_av1<P: Pixel + Default>(
         (enc.quantizer, ChromaSampling::Cs420)
     };
 
-    let speed = SpeedTweaks::from_my_preset(enc.speed, quantizer, width.max(height));
+    let speed = enc.animation_speed(quantizer, width.max(height), is_alpha);
 
     let color_description = if is_alpha {
         None
@@ -478,7 +477,7 @@ fn make_sequence_header<P: Pixel + Default>(
         (enc.quantizer, ChromaSampling::Cs420)
     };
 
-    let speed = SpeedTweaks::from_my_preset(enc.speed, quantizer, width.max(height));
+    let speed = enc.animation_speed(quantizer, width.max(height), is_alpha);
 
     let config = EncoderConfig {
         width,
@@ -960,5 +959,59 @@ mod cancellation_tests {
         check_backend::<u8>(8, true);
         check_backend::<u16>(10, false);
         check_backend::<u16>(10, true);
+    }
+}
+
+#[cfg(all(test, feature = "__expert"))]
+mod filter_tests {
+    use super::*;
+
+    fn filter_packets<P: Pixel + Default>(depth: u8, alpha: bool, cdef: bool, lrf: bool) -> Vec<u8> {
+        let params = crate::expert::InternalParams { lrf: Some(lrf), ..Default::default() };
+        let enc = crate::Encoder::new().with_speed(10).with_quality(35.0)
+            .with_num_threads(Some(1)).with_cdef(Some(cdef)).with_internal_params(params);
+        let control = enc.animation_control();
+        let packets = encode_sequence_av1::<P>(&enc, &control, (65, 67), 2, |index, frame| {
+            for (plane_index, plane) in frame.planes.iter_mut().enumerate() {
+                let width = if plane_index == 0 { 65 } else { 33 };
+                let height = if plane_index == 0 { 67 } else { 34 };
+                if alpha && plane_index != 0 { continue; }
+                let mut slice = plane.mut_slice(Default::default());
+                for (y, row) in slice.rows_iter_mut().take(height).enumerate() {
+                    for (x, out) in row[..width].iter_mut().enumerate() {
+                        let value = ((x * 17 + y * 31 + (x * y % 29) * 7 + index * 13) % 256) << (depth - 8);
+                        *out = P::cast_from(value);
+                    }
+                }
+            }
+            Ok(())
+        }, alpha, depth).unwrap();
+        assert_eq!(packets.len(), 2);
+        packets.concat()
+    }
+
+    fn check_filters<P: Pixel + Default>(depth: u8) {
+        let off = filter_packets::<P>(depth, false, false, false);
+        let cdef = filter_packets::<P>(depth, false, true, false);
+        let lrf = filter_packets::<P>(depth, false, false, true);
+        let both = filter_packets::<P>(depth, false, true, true);
+        assert!(off != cdef, "CDEF override must reach encoded packets at depth {depth}");
+        assert!(off != lrf, "restoration override must reach encoded packets at depth {depth}");
+        let alpha_off = filter_packets::<P>(depth, true, false, false);
+        let alpha_on = filter_packets::<P>(depth, true, true, true);
+        assert_eq!(alpha_off, alpha_on, "color filter overrides must preserve the alpha policy");
+        if let Some(dir) = std::env::var_os("ZENRAVIF_FILTER_ARTIFACTS") {
+            let dir = std::path::PathBuf::from(dir);
+            std::fs::create_dir_all(&dir).unwrap();
+            for (name, data) in [("off", off), ("cdef", cdef), ("lrf", lrf), ("both", both), ("alpha", alpha_off)] {
+                std::fs::write(dir.join(format!("filters-{depth}-{name}.obu")), data).unwrap();
+            }
+        }
+    }
+
+    #[test]
+    fn animation_filter_overrides_reach_packets() {
+        check_filters::<u8>(8);
+        check_filters::<u16>(10);
     }
 }
