@@ -6,6 +6,10 @@ encoder by Kornel Lesiński, extended for the zenrav1e fork's still-image work.
 
 ## [Unreleased]
 
+### Animation color formats (2026-09-07)
+
+- Honor configured 4:2:0/4:4:4, RGB identity and full/limited range throughout animation pixels, codec contexts and container signaling. Pin zenrav1e `1447c200` for forced-4x4 inter partitions and exact partial chroma edges. See `benchmarks/animation_color_2026-09-07.md`.
+
 ### Exact animation timing (2026-09-07)
 
 - Add `TimedAnimFrame` and four timed RGB/RGBA animation entry points with exact timescale ticks, alpha timing, checked totals and exact result fields; preserve the millisecond APIs. See `benchmarks/animation_timing_2026-09-07.md`.

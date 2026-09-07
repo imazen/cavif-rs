@@ -173,7 +173,7 @@ impl crate::Encoder<'_> {
             frames.len(),
             |frame_idx, rav1e_frame| {
                 let f = &frames[frame_idx];
-                fill_frame_rgb8_420(rav1e_frame, width, height, f.pixels, &control)?;
+                fill_frame_rgb8_420(self, rav1e_frame, f.pixels, &control)?;
                 Ok(())
             },
             false,
@@ -231,7 +231,7 @@ impl crate::Encoder<'_> {
             frames.len(),
             |frame_idx, rav1e_frame| {
                 let f = &frames[frame_idx];
-                fill_frame_rgba8_color_420(rav1e_frame, width, height, f.pixels, self.premultiplied_alpha, &control)?;
+                fill_frame_rgba8_color_420(self, rav1e_frame, f.pixels, self.premultiplied_alpha, &control)?;
                 Ok(())
             },
             false,
@@ -296,7 +296,7 @@ impl crate::Encoder<'_> {
             frames.len(),
             |frame_idx, rav1e_frame| {
                 let f = &frames[frame_idx];
-                fill_frame_rgb16_420(rav1e_frame, width, height, f.pixels, &control)?;
+                fill_frame_rgb16_420(self, rav1e_frame, f.pixels, &control)?;
                 Ok(())
             },
             false,
@@ -355,7 +355,7 @@ impl crate::Encoder<'_> {
             frames.len(),
             |frame_idx, rav1e_frame| {
                 let f = &frames[frame_idx];
-                fill_frame_rgba16_color_420(rav1e_frame, width, height, f.pixels, self.premultiplied_alpha, &control)?;
+                fill_frame_rgba16_color_420(self, rav1e_frame, f.pixels, self.premultiplied_alpha, &control)?;
                 Ok(())
             },
             false,
@@ -424,10 +424,11 @@ fn encode_sequence_av1_timed<P: Pixel + Default>(
     control.check().map_err(|e| at!(e))?;
     enc.check_pixel_limit(width, height).at()?;
 
+    let (color_sampling, matrix, range) = animation_color(enc, is_alpha).map_err(|e| at!(e))?;
     let (quantizer, chroma_sampling) = if is_alpha {
         (enc.alpha_quantizer, ChromaSampling::Cs400)
     } else {
-        (enc.quantizer, ChromaSampling::Cs420)
+        (enc.quantizer, color_sampling)
     };
 
     let speed = enc.animation_speed(quantizer, width.max(height), is_alpha);
@@ -440,7 +441,7 @@ fn encode_sequence_av1_timed<P: Pixel + Default>(
                 .unwrap_or(TransferCharacteristics::SRGB),
             color_primaries: enc.color_primaries
                 .unwrap_or(ColorPrimaries::BT709),
-            matrix_coefficients: MatrixCoefficients::BT601,
+            matrix_coefficients: matrix,
         })
     };
 
@@ -452,7 +453,7 @@ fn encode_sequence_av1_timed<P: Pixel + Default>(
         bit_depth: bit_depth as usize,
         chroma_sampling,
         chroma_sample_position: ChromaSamplePosition::Unknown,
-        pixel_range: PixelRange::Full,
+        pixel_range: range,
         color_description,
         mastering_display: if is_alpha { None } else { enc.mastering_display },
         content_light: if is_alpha { None } else { enc.content_light },
@@ -511,6 +512,9 @@ fn encode_sequence_av1_timed<P: Pixel + Default>(
         control.check().map_err(|e| at!(e))?;
         let mut frame = ctx.new_frame();
         init_frame(i, &mut frame)?;
+        if !is_alpha && range == PixelRange::Limited {
+            limit_color_range(&mut frame, width, height, chroma_sampling, bit_depth, control)?;
+        }
         ctx.send_frame((std::sync::Arc::new(frame), enc.animation_frame_parameters(is_alpha))).map_err(Error::from)?;
     }
     ctx.flush();
@@ -555,10 +559,11 @@ fn make_sequence_header<P: Pixel + Default>(
     // Pre-flight: guard the standalone context built here too.
     enc.check_pixel_limit(width, height).at()?;
 
+    let (color_sampling, matrix, range) = animation_color(enc, is_alpha).map_err(|e| at!(e))?;
     let (quantizer, chroma_sampling) = if is_alpha {
         (enc.alpha_quantizer, ChromaSampling::Cs400)
     } else {
-        (enc.quantizer, ChromaSampling::Cs420)
+        (enc.quantizer, color_sampling)
     };
 
     let speed = enc.animation_speed(quantizer, width.max(height), is_alpha);
@@ -571,7 +576,7 @@ fn make_sequence_header<P: Pixel + Default>(
         bit_depth: bit_depth as usize,
         chroma_sampling,
         chroma_sample_position: ChromaSamplePosition::Unknown,
-        pixel_range: PixelRange::Full,
+        pixel_range: range,
         color_description: if is_alpha {
             None
         } else {
@@ -580,7 +585,7 @@ fn make_sequence_header<P: Pixel + Default>(
                     .unwrap_or(TransferCharacteristics::SRGB),
                 color_primaries: enc.color_primaries
                     .unwrap_or(ColorPrimaries::BT709),
-                matrix_coefficients: MatrixCoefficients::BT601,
+                matrix_coefficients: matrix,
             })
         },
         mastering_display: None,
@@ -672,9 +677,9 @@ fn assemble_animation(
 
     let mut anim = AnimatedImage::new();
     anim.set_timescale(timescale);
-    anim.set_color_config(make_av1c_config(false, bit_depth));
+    anim.set_color_config(make_av1c_config(false, bit_depth, enc.chroma_subsampling));
     if alpha_frames.is_some() {
-        anim.set_alpha_config(make_av1c_config(true, bit_depth));
+        anim.set_alpha_config(make_av1c_config(true, bit_depth, enc.chroma_subsampling));
     }
     enc.configure_animation_metadata(&mut anim, alpha_frames.is_some());
     let avif_file = anim.try_serialize(width as u32, height as u32, &frames, &color_seq_header, alpha_seq_header.as_deref())
@@ -689,15 +694,80 @@ fn assemble_animation(
     })
 }
 
+fn animation_color(enc: &crate::Encoder<'_>, alpha: bool) -> core::result::Result<(ChromaSampling, MatrixCoefficients, PixelRange), Error> {
+    if alpha { return Ok((ChromaSampling::Cs400, MatrixCoefficients::BT601, PixelRange::Full)); }
+    let sampling = if enc.chroma_subsampling == crate::ChromaSubsampling::Yuv420 { ChromaSampling::Cs420 } else { ChromaSampling::Cs444 };
+    let range = enc.pixel_range.unwrap_or(PixelRange::Full);
+    let matrix = if enc.color_model == crate::ColorModel::RGB { MatrixCoefficients::Identity } else { MatrixCoefficients::BT601 };
+    if matrix == MatrixCoefficients::Identity && (sampling != ChromaSampling::Cs444 || range != PixelRange::Full) {
+        return Err(Error::Unsupported("RGB identity animation requires full-range 4:4:4"));
+    }
+    Ok((sampling, matrix, range))
+}
+
+fn fill_color_444<P: Pixel>(frame: &mut Frame<P>, (width, height): (usize, usize), depth: u8,
+    model: crate::ColorModel, control: &AnimationControl, pixel: impl Fn(usize, usize) -> [u16; 3],
+) -> core::result::Result<(), Error> {
+    let max = f64::from((1u16 << depth) - 1);
+    let center = f64::from(1u16 << (depth - 1));
+    for (plane_index, plane) in frame.planes.iter_mut().enumerate() {
+        let mut slice = plane.mut_slice(Default::default());
+        for (y, row) in slice.rows_iter_mut().take(height).enumerate() {
+            control.check()?;
+            for (x, out) in row[..width].iter_mut().enumerate() {
+                let [r, g, b] = pixel(x, y).map(f64::from);
+                let value = if model == crate::ColorModel::RGB {
+                    [g, b, r][plane_index]
+                } else {
+                    let luma = f64::from(BT601[0]) * r + f64::from(BT601[1]) * g + f64::from(BT601[2]) * b;
+                    match plane_index {
+                        0 => luma,
+                        1 => (b - luma) * 0.5 / (1.0 - f64::from(BT601[2])) + center,
+                        _ => (r - luma) * 0.5 / (1.0 - f64::from(BT601[0])) + center,
+                    }
+                };
+                *out = P::cast_from(value.round().clamp(0.0, max) as u16);
+            }
+        }
+    }
+    Ok(())
+}
+
+fn limit_color_range<P: Pixel>(frame: &mut Frame<P>, width: usize, height: usize, sampling: ChromaSampling,
+    depth: u8, control: &AnimationControl,
+) -> core::result::Result<(), Error> {
+    let scale = 1u32 << (depth - 8);
+    let max = (1u32 << depth) - 1;
+    for (p, plane) in frame.planes.iter_mut().enumerate() {
+        let (w, h) = if p != 0 && sampling == ChromaSampling::Cs420 { (width.div_ceil(2), height.div_ceil(2)) } else { (width, height) };
+        let mut slice = plane.mut_slice(Default::default());
+        for row in slice.rows_iter_mut().take(h) {
+            control.check()?;
+            for value in &mut row[..w] {
+                let v = u32::cast_from(*value);
+                let range = if p == 0 { 219 } else { 224 } * scale;
+                *value = P::cast_from(16 * scale + (v * range + max / 2) / max);
+            }
+        }
+    }
+    Ok(())
+}
+
 // ---- Frame fill helpers (8-bit) ----
 
 fn fill_frame_rgb8_420(
+    enc: &crate::Encoder<'_>,
     frame: &mut Frame<u8>,
-    width: usize,
-    height: usize,
     img: ImgRef<'_, RGB8>,
     control: &AnimationControl,
 ) -> core::result::Result<(), Error> {
+    let (width, height) = (img.width(), img.height());
+    if enc.chroma_subsampling == crate::ChromaSubsampling::Yuv444 {
+        return fill_color_444(frame, (width, height), 8, enc.color_model, control, |x, y| {
+            let px = img[(x, y)];
+            [u16::from(px.r), u16::from(px.g), u16::from(px.b)]
+        });
+    }
     let chroma_width = width.div_ceil(2);
     let chroma_height = height.div_ceil(2);
 
@@ -755,13 +825,20 @@ fn fill_frame_rgb8_420(
 }
 
 fn fill_frame_rgba8_color_420(
+    enc: &crate::Encoder<'_>,
     frame: &mut Frame<u8>,
-    width: usize,
-    height: usize,
     img: ImgRef<'_, RGBA8>,
     premultiplied: bool,
     control: &AnimationControl,
 ) -> core::result::Result<(), Error> {
+    let (width, height) = (img.width(), img.height());
+    if enc.chroma_subsampling == crate::ChromaSubsampling::Yuv444 {
+        return fill_color_444(frame, (width, height), 8, enc.color_model, control, |x, y| {
+            let px = img[(x, y)];
+            let scale = |v| if premultiplied { ((u32::from(v) * u32::from(px.a) + 127) / 255) as u16 } else { u16::from(v) };
+            [scale(px.r), scale(px.g), scale(px.b)]
+        });
+    }
     let chroma_width = width.div_ceil(2);
     let chroma_height = height.div_ceil(2);
 
@@ -844,12 +921,18 @@ fn fill_frame_alpha8(
 
 /// Convert 10-bit RGB to 10-bit YCbCr 4:2:0 using BT.601 matrix.
 fn fill_frame_rgb16_420(
+    enc: &crate::Encoder<'_>,
     frame: &mut Frame<u16>,
-    width: usize,
-    height: usize,
     img: ImgRef<'_, rgb::RGB<u16>>,
     control: &AnimationControl,
 ) -> core::result::Result<(), Error> {
+    let (width, height) = (img.width(), img.height());
+    if enc.chroma_subsampling == crate::ChromaSubsampling::Yuv444 {
+        return fill_color_444(frame, (width, height), 10, enc.color_model, control, |x, y| {
+            let px = img[(x, y)];
+            [px.r, px.g, px.b]
+        });
+    }
     let chroma_width = width.div_ceil(2);
     let chroma_height = height.div_ceil(2);
 
@@ -911,13 +994,20 @@ fn fill_frame_rgb16_420(
 
 /// Convert 10-bit RGBA color channels to 10-bit YCbCr 4:2:0 (alpha ignored).
 fn fill_frame_rgba16_color_420(
+    enc: &crate::Encoder<'_>,
     frame: &mut Frame<u16>,
-    width: usize,
-    height: usize,
     img: ImgRef<'_, rgb::RGBA<u16>>,
     premultiplied: bool,
     control: &AnimationControl,
 ) -> core::result::Result<(), Error> {
+    let (width, height) = (img.width(), img.height());
+    if enc.chroma_subsampling == crate::ChromaSubsampling::Yuv444 {
+        return fill_color_444(frame, (width, height), 10, enc.color_model, control, |x, y| {
+            let px = img[(x, y)];
+            let scale = |v| if premultiplied { ((u32::from(v) * u32::from(px.a) + 511) / 1023) as u16 } else { v };
+            [scale(px.r), scale(px.g), scale(px.b)]
+        });
+    }
     let chroma_width = width.div_ceil(2);
     let chroma_height = height.div_ceil(2);
 
@@ -1001,9 +1091,13 @@ fn fill_frame_alpha16(
 }
 
 /// Construct an Av1CBox configuration for the given bit depth.
-fn make_av1c_config(is_alpha: bool, bit_depth: u8) -> Av1CBox {
+fn make_av1c_config(is_alpha: bool, bit_depth: u8, subsampling: crate::ChromaSubsampling) -> Av1CBox {
     let mut config = Av1CBox::default();
     config.monochrome = is_alpha;
+    let subsampled = is_alpha || subsampling == crate::ChromaSubsampling::Yuv420;
+    config.chroma_subsampling_x = subsampled;
+    config.chroma_subsampling_y = subsampled;
+    config.seq_profile = if subsampled { 0 } else { 1 };
     if bit_depth > 8 {
         config.high_bitdepth = true;
         if bit_depth > 10 {
@@ -1031,7 +1125,7 @@ mod cancellation_tests {
 
     fn check_backend<P: Pixel + Default>(bit_depth: u8, is_alpha: bool) {
         let calls = Arc::new(AtomicUsize::new(0));
-        let enc = crate::Encoder::new().with_speed(10)
+        let enc = crate::Encoder::new().with_chroma_subsampling(crate::ChromaSubsampling::Yuv420).with_speed(10)
             .with_stop(almost_enough::StopToken::new(StopAfterChecks(calls.clone())));
         let control = enc.animation_control();
         // The wrapper polls fewer than twelve times for this single-frame
@@ -1059,7 +1153,7 @@ mod filter_tests {
 
     fn filter_packets<P: Pixel + Default>(depth: u8, alpha: bool, cdef: bool, lrf: bool) -> Vec<u8> {
         let params = crate::expert::InternalParams { lrf: Some(lrf), ..Default::default() };
-        let enc = crate::Encoder::new().with_speed(10).with_quality(35.0)
+        let enc = crate::Encoder::new().with_chroma_subsampling(crate::ChromaSubsampling::Yuv420).with_speed(10).with_quality(35.0)
             .with_num_threads(Some(1)).with_cdef(Some(cdef)).with_internal_params(params);
         let control = enc.animation_control();
         let packets = encode_sequence_av1::<P>(&enc, &control, (65, 67), 2, |index, frame| {
@@ -1132,7 +1226,7 @@ mod coding_tests {
     }
 
     fn check<P: Pixel + Default>(depth: u8) {
-        let base = crate::Encoder::new().with_speed(10).with_quality(35.0)
+        let base = crate::Encoder::new().with_chroma_subsampling(crate::ChromaSubsampling::Yuv420).with_speed(10).with_quality(35.0)
             .with_alpha_quality(35.0).with_num_threads(Some(1));
         let advanced = base.clone().with_vaq(true, 2.0).with_seg_boost(1.5)
             .with_still_image_tuning(true).with_trellis(true);
@@ -1180,7 +1274,7 @@ mod hint_tests {
 
     fn packets<P: Pixel + Default>(depth: u8, alpha: bool, map: Option<Box<[f32]>>) -> Vec<Vec<u8>> {
         let params = crate::expert::InternalParams { sb_q_scale: map, ..Default::default() };
-        let enc = crate::Encoder::new().with_speed(8).with_quality(60.0)
+        let enc = crate::Encoder::new().with_chroma_subsampling(crate::ChromaSubsampling::Yuv420).with_speed(8).with_quality(60.0)
             .with_num_threads(Some(1)).with_internal_params(params);
         encode_sequence_av1::<P>(&enc, &enc.animation_control(), (129, 67), 2, |index, frame| {
             for (p, plane) in frame.planes.iter_mut().enumerate() {

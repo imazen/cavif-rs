@@ -216,7 +216,7 @@ pub struct Encoder<'exif_slice> {
     /// Whether output color data is premultiplied and signals that association.
     pub(crate) premultiplied_alpha: bool,
     /// Which pixel format to use in AVIF file. RGB tends to give larger files.
-    color_model: ColorModel,
+    pub(crate) color_model: ColorModel,
     /// How many threads should be used (0 = match core count), None - use global rayon thread pool
     threads: Option<usize>,
     /// [`AlphaColorMode`]
@@ -224,7 +224,7 @@ pub struct Encoder<'exif_slice> {
     /// 8 or 10
     output_depth: BitDepth,
     /// [`ChromaSubsampling`]
-    chroma_subsampling: ChromaSubsampling,
+    pub(crate) chroma_subsampling: ChromaSubsampling,
     /// Dropped into MPEG infe BOX
     exif: Option<Cow<'exif_slice, [u8]>>,
     /// Optional cancellation token for interrupting encoding
@@ -241,7 +241,7 @@ pub struct Encoder<'exif_slice> {
     /// Override transfer characteristics (default: SRGB)
     pub(crate) transfer_characteristics: Option<TransferCharacteristics>,
     /// Override pixel range (default: Full)
-    pixel_range: Option<PixelRange>,
+    pub(crate) pixel_range: Option<PixelRange>,
     /// HDR mastering display metadata (SMPTE ST 2086)
     pub(crate) mastering_display: Option<MasteringDisplay>,
     /// HDR content light level metadata (CEA-861.3)
@@ -1196,12 +1196,13 @@ impl Encoder<'_> {
     }
 
     /// Configure the animation container from the same metadata as stills.
-    /// The current animation pixel path codes full-range BT.601 YCbCr.
+    /// Color signaling follows the selected animation pixel conversion.
     pub(crate) fn configure_animation_metadata(&self, image: &mut zenavif_serialize::animated::AnimatedImage, has_alpha: bool) {
         image.set_color_description(
             self.color_primaries.unwrap_or(ColorPrimaries::BT709) as u16,
             self.transfer_characteristics.unwrap_or(TransferCharacteristics::SRGB) as u16,
-            MatrixCoefficients::BT601 as u16, true,
+            if self.color_model == ColorModel::RGB { MatrixCoefficients::Identity } else { MatrixCoefficients::BT601 } as u16,
+            self.pixel_range.unwrap_or(PixelRange::Full) == PixelRange::Full,
         );
         image.set_premultiplied_alpha(has_alpha && self.premultiplied_alpha);
         if let Some(exif) = &self.exif { image.set_exif(exif.to_vec()); }
