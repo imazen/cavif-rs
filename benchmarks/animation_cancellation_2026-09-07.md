@@ -29,3 +29,10 @@ run-heavy wrapper with 16G memory and four jobs.
 
 The encoder's pre-existing quality-envelope investigation is independent and
 remains open. This change does not repin quality or timing baselines.
+
+Code correction: `294cd9ee`. The unchanged canonical metadata integration test
+exports ten complete AVIF files across RGB/RGBA input storage depths, coded
+8/10-bit depths and premultiplication. Every file is byte-identical against
+parent 176ad8ee; `animation_cancellation_identity_2026-09-07.tsv` records hashes.
+Both runs pass all three metadata tests. The canonical cancellation regression
+fails against the old Git dependency after its initial public-entry check.

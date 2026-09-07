@@ -6,7 +6,7 @@ encoder by Kornel Lesiński, extended for the zenrav1e fork's still-image work.
 
 ## [Unreleased]
 
-### Animation cancellation correction (2026-09-07)
+### Animation cancellation correction (2026-09-07, 294cd9ee)
 
 - Honor cancellation tokens and one shared timeout across animation preparation, color/alpha tracks and serialization. With the `stop` feature, forward the combined control to zenrav1e's per-superblock checks and preserve `Error::Cancelled`.
 - Enabled regressions cover all four input formats; removing backend forwarding makes the per-superblock test fail. See `benchmarks/animation_cancellation_2026-09-07.md`.
