@@ -638,6 +638,21 @@ impl<'exif_slice> Encoder<'exif_slice> {
         let _ = (config, is_alpha);
     }
 
+    pub(crate) fn animation_frame_parameters(&self, is_alpha: bool) -> FrameParameters {
+        #[cfg(feature = "imazen")]
+        if !is_alpha && FRAME_HINTS_LIVE {
+            return FrameParameters {
+                frame_hints: self.override_sb_q_scale.clone().map(|map| {
+                    std::sync::Arc::new(FrameHints::new().with_sb_q_scale(map))
+                }),
+                ..Default::default()
+            };
+        }
+        #[cfg(not(feature = "imazen"))]
+        let _ = is_alpha;
+        FrameParameters::default()
+    }
+
     pub(crate) fn configure_animation_threads(&self, config: Config) -> Config {
         match self.threads {
             Some(0) => config.with_threads(rayon::current_num_threads()),

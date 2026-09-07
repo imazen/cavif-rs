@@ -429,7 +429,7 @@ fn encode_sequence_av1<P: Pixel + Default>(
         control.check().map_err(|e| at!(e))?;
         let mut frame = ctx.new_frame();
         init_frame(i, &mut frame)?;
-        ctx.send_frame(frame).map_err(Error::from)?;
+        ctx.send_frame((std::sync::Arc::new(frame), enc.animation_frame_parameters(is_alpha))).map_err(Error::from)?;
     }
     ctx.flush();
 
@@ -1080,6 +1080,57 @@ mod coding_tests {
 
     #[test]
     fn animation_coding_options_reach_color_and_lossless_alpha() {
+        check::<u8>(8);
+        check::<u16>(10);
+    }
+}
+
+#[cfg(all(test, feature = "__expert"))]
+mod hint_tests {
+    use super::*;
+
+    fn packets<P: Pixel + Default>(depth: u8, alpha: bool, map: Option<Box<[f32]>>) -> Vec<Vec<u8>> {
+        let params = crate::expert::InternalParams { sb_q_scale: map, ..Default::default() };
+        let enc = crate::Encoder::new().with_speed(8).with_quality(60.0)
+            .with_num_threads(Some(1)).with_internal_params(params);
+        encode_sequence_av1::<P>(&enc, &enc.animation_control(), (129, 67), 2, |index, frame| {
+            for (p, plane) in frame.planes.iter_mut().enumerate() {
+                if alpha && p != 0 { continue; }
+                let (width, height) = if p == 0 { (129, 67) } else { (65, 34) };
+                let mut slice = plane.mut_slice(Default::default());
+                for (y, row) in slice.rows_iter_mut().take(height).enumerate() {
+                    for (x, out) in row[..width].iter_mut().enumerate() {
+                        *out = P::cast_from((x * 17 + y * 31 + x * y * 7 + index * 13 + p * 47) % (1 << depth));
+                    }
+                }
+            }
+            Ok(())
+        }, alpha, depth).unwrap()
+    }
+
+    fn check<P: Pixel + Default>(depth: u8) {
+        for alpha in [false, true] {
+            let base = packets::<P>(depth, alpha, None);
+            let neutral = packets::<P>(depth, alpha, Some(vec![1.0; 6].into_boxed_slice()));
+            let skewed = packets::<P>(depth, alpha, Some(vec![0.5, 2.0, 0.5, 2.0, 0.5, 2.0].into_boxed_slice()));
+            if let Some(dir) = std::env::var_os("ZENRAVIF_HINT_ARTIFACTS") {
+                let dir = std::path::PathBuf::from(dir);
+                std::fs::create_dir_all(&dir).unwrap();
+                for (name, packets) in [("base", &base), ("neutral", &neutral), ("skewed", &skewed)] {
+                    std::fs::write(dir.join(format!("hints-{depth}-{}-{name}.obu", if alpha { "alpha" } else { "color" })), packets.concat()).unwrap();
+                }
+            }
+            assert_eq!(base, neutral, "neutral hints must preserve bytes");
+            assert_eq!(base.len(), 2);
+            for i in 0..2 {
+                if alpha { assert_eq!(base[i], skewed[i], "color hints must not affect alpha"); }
+                else { assert!(base[i] != skewed[i], "hint ignored: depth={depth} frame={i}"); }
+            }
+        }
+    }
+
+    #[test]
+    fn animation_hints_reach_each_color_frame_and_preserve_alpha() {
         check::<u8>(8);
         check::<u16>(10);
     }

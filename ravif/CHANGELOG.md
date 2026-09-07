@@ -2,6 +2,10 @@
 
 ## [Unreleased]
 
+### Animation quantizer hints (2026-09-07)
+
+- Forward the configured superblock quantizer map on every animation color submission, preserving neutral-map and alpha bytes; backend application remains intra-only. See `benchmarks/animation_hints_2026-09-07.md`.
+
 ### Animation coding controls (2026-09-07)
 
 - Forward animation VAQ, segmentation boost, trellis and tune for color; apply lossless quantization to both tracks. Pin zenrav1e `1d5a6e04` to prevent trellis from changing lossless samples, with exact decoded-plane verification.
