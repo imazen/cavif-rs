@@ -2,6 +2,11 @@
 
 ## [Unreleased]
 
+### Fast-preset mode search correction (2026-09-07)
+
+- Restore the preset's full intra-mode search at speeds 9/10 while retaining CDEF and transform-domain choices. The former one-candidate cap made the shipped tune's photo/q35 result larger and lower-quality than the original budget.
+- A 35-image photo/screen audit improves every matched-quality rate curve: median 3.33% fewer bytes at speed 10 and 5.20% at speed 9. Median single-pass encode time rises 23% and 49%, respectively; this is a documented quality/cost correction, not a speedup. See `benchmarks/quality_drift_2026-09-07.md`.
+
 ### Still premultiplication correction (2026-09-07)
 
 - Associate RGB by multiplying by alpha before still encoding. Opaque pixels retain their color and alpha; fully transparent pixels clear only color. Previously the premultiplied path divided partial-alpha RGB and made opaque pixels transparent.

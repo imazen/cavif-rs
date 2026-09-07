@@ -2069,6 +2069,12 @@ impl SpeedTweaks {
     /// decay isolation A/B" + benchmarks/hyperparam_sizedecay_nontune_2026-07-03.tsv.
     const SMALL_PX_RDO_TX_LIVE: bool = true;
 
+    /// 2026-09-07 correction: the historical SATD-one-candidate arm described
+    /// below is no longer the default. It was fitted under a different tune;
+    /// the as-shipped audit in benchmarks/quality_drift_2026-09-07.md restores
+    /// the preset's full mode budget while retaining CDEF/transform choices.
+    /// The percentages below describe the historical fit, not the current row.
+    ///
     /// Master switch for the S10-program re-tiered s9/s10 rows (2026-07-05,
     /// zenavif docs/S10_PROGRAM.md + benchmarks/rd_gap_s10_2026-07-05.tsv).
     /// The JPEG-anchored scoreboard measured the shipped s10 row LOSING to
@@ -2277,14 +2283,13 @@ impl SpeedTweaks {
             } else {
                 None
             },
-            // S10 program: SATD-decides at the re-tiered ultra-fast rungs
-            // (s10 solo 337 -> ~277 ms/MP for BD ~-0.9; on the composed s9'
-            // it keeps 89% of the c4 win at 66% of its time). None elsewhere.
-            num_modes_rdo_override: if Self::S10_RETIER_LIVE && speed >= 9 {
-                Some(1)
-            } else {
-                None
-            },
+            // Keep the preset's full intra mode budget. The former one-candidate
+            // cap regressed the shipped tune's photo RD; removing it improves
+            // matched-quality rate on all 35 audited photo/screen images (median
+            // -3.33%, ~1.23x encode time). CDEF and transform-domain choices stay
+            // independently live. The backend's explicit mode-budget knob and
+            // its application below are retained.
+            num_modes_rdo_override: None,
             min_tile_size: match speed {
                 0 => 4096,
                 1 => 2048,
