@@ -362,7 +362,7 @@ fn encode_sequence_av1<P: Pixel + Default>(
         })
     };
 
-    let config = EncoderConfig {
+    let mut config = EncoderConfig {
         width,
         height,
         time_base: Rational::new(1, 1000),
@@ -410,6 +410,7 @@ fn encode_sequence_av1<P: Pixel + Default>(
         ..Default::default()
     };
 
+    enc.configure_animation_coding(&mut config, is_alpha);
     let cfg = enc.configure_animation_threads(Config::new().with_encoder_config(config));
     // Consume zenrav1e's bare `InvalidConfig` and trace it here (pre-loop
     // boundary). `Error::from` preserves the rav1e reason string.
@@ -479,7 +480,7 @@ fn make_sequence_header<P: Pixel + Default>(
 
     let speed = enc.animation_speed(quantizer, width.max(height), is_alpha);
 
-    let config = EncoderConfig {
+    let mut config = EncoderConfig {
         width,
         height,
         time_base: Rational::new(1, 1000),
@@ -531,6 +532,7 @@ fn make_sequence_header<P: Pixel + Default>(
         // measured them, and a guessed value would silently change RD.
         ..Default::default()
     };
+    enc.configure_animation_coding(&mut config, is_alpha);
     let cfg = Config::new().with_encoder_config(config);
     // TODO(whereat): when this crate bumps to zenrav1e ^0.2.0 (which returns
     // `At<InvalidConfig>`), switch this to `.map_err_at(Error::from)?` to carry
@@ -1013,5 +1015,72 @@ mod filter_tests {
     fn animation_filter_overrides_reach_packets() {
         check_filters::<u8>(8);
         check_filters::<u16>(10);
+    }
+}
+
+#[cfg(all(test, feature = "imazen"))]
+mod coding_tests {
+    use super::*;
+
+    fn sample(index: usize, plane: usize, x: usize, y: usize, depth: u8) -> usize {
+        (x * 17 + y * 31 + (x * y % 29) * 7 + index * 13 + plane * 47) % (1 << depth)
+    }
+
+    fn packets<P: Pixel + Default>(enc: &crate::Encoder<'_>, depth: u8, alpha: bool) -> Vec<u8> {
+        encode_sequence_av1::<P>(enc, &enc.animation_control(), (65, 67), 2, |index, frame| {
+            for (p, plane) in frame.planes.iter_mut().enumerate() {
+                if alpha && p != 0 { continue; }
+                let (width, height) = if p == 0 { (65, 67) } else { (33, 34) };
+                let mut slice = plane.mut_slice(Default::default());
+                for (y, row) in slice.rows_iter_mut().take(height).enumerate() {
+                    for (x, out) in row[..width].iter_mut().enumerate() {
+                        *out = P::cast_from(sample(index, p, x, y, depth));
+                    }
+                }
+            }
+            Ok(())
+        }, alpha, depth).unwrap().concat()
+    }
+
+    fn check<P: Pixel + Default>(depth: u8) {
+        let base = crate::Encoder::new().with_speed(10).with_quality(35.0)
+            .with_alpha_quality(35.0).with_num_threads(Some(1));
+        let advanced = base.clone().with_vaq(true, 2.0).with_seg_boost(1.5)
+            .with_still_image_tuning(true).with_trellis(true);
+        for alpha in [false, true] {
+            let original = packets::<P>(&base, depth, alpha);
+            let lossless = packets::<P>(&base.clone().with_lossless(true), depth, alpha);
+            let tuned = packets::<P>(&advanced, depth, alpha);
+            let lossless_tuned = packets::<P>(&advanced.clone().with_lossless(true), depth, alpha);
+            assert!(original != lossless, "lossless request ignored: depth={depth} alpha={alpha}");
+            if alpha { assert_eq!(original, tuned, "color quantization controls must preserve alpha"); }
+            else { assert!(original != tuned, "color tuning ignored at depth={depth}"); }
+            if let Some(dir) = std::env::var_os("ZENRAVIF_CODING_ARTIFACTS") {
+                let dir = std::path::PathBuf::from(dir);
+                std::fs::create_dir_all(&dir).unwrap();
+                let stem = format!("coding-{depth}-{}", if alpha { "alpha" } else { "color" });
+                for (name, data) in [("base", original), ("lossless", lossless), ("tuned", tuned), ("lossless-tuned", lossless_tuned)] {
+                    std::fs::write(dir.join(format!("{stem}-{name}.obu")), data).unwrap();
+                }
+                let mut expected = Vec::new();
+                for index in 0..2 {
+                    for p in 0..if alpha { 1 } else { 3 } {
+                        let (width, height) = if p == 0 { (65, 67) } else { (33, 34) };
+                        for y in 0..height { for x in 0..width {
+                            let value = sample(index, p, x, y, depth) as u16;
+                            if depth == 8 { expected.push(value as u8); }
+                            else { expected.extend_from_slice(&value.to_le_bytes()); }
+                        } }
+                    }
+                }
+                std::fs::write(dir.join(format!("{stem}.source.yuv")), expected).unwrap();
+            }
+        }
+    }
+
+    #[test]
+    fn animation_coding_options_reach_color_and_lossless_alpha() {
+        check::<u8>(8);
+        check::<u16>(10);
     }
 }

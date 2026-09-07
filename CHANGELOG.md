@@ -6,6 +6,11 @@ encoder by Kornel Lesiński, extended for the zenrav1e fork's still-image work.
 
 ## [Unreleased]
 
+### Animation coding controls (2026-09-07)
+
+- Forward animation VAQ, segmentation boost, trellis and tune for color; apply lossless quantization to both tracks. Pin zenrav1e `1d5a6e04` to prevent trellis from changing lossless samples, with exact decoded-plane verification.
+
+
 ### Animation speed overrides (2026-09-07)
 
 - Apply the eight remaining explicit speed overrides to animation color encoding, including partition limits and prediction modes; retain alpha presets. See `benchmarks/animation_speed_2026-09-07.md`.

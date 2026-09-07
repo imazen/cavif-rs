@@ -617,6 +617,27 @@ impl<'exif_slice> Encoder<'exif_slice> {
         speed
     }
 
+    pub(crate) fn configure_animation_coding(&self, config: &mut EncoderConfig, is_alpha: bool) {
+        #[cfg(feature = "imazen")]
+        {
+            // Match the still-image policy: lossless covers both tracks;
+            // perceptual coding controls apply only to the color track.
+            if self.lossless {
+                config.quantizer = 0;
+                config.min_quantizer = 0;
+            }
+            if !is_alpha {
+                config.enable_vaq = self.enable_vaq;
+                config.vaq_strength = self.vaq_strength;
+                config.seg_boost = self.seg_boost;
+                config.enable_trellis = self.enable_trellis;
+                config.tune = if self.tune_still_image { Tune::StillImage } else { Tune::Psychovisual };
+            }
+        }
+        #[cfg(not(feature = "imazen"))]
+        let _ = (config, is_alpha);
+    }
+
     pub(crate) fn configure_animation_threads(&self, config: Config) -> Config {
         match self.threads {
             Some(0) => config.with_threads(rayon::current_num_threads()),
@@ -2944,6 +2965,35 @@ mod animation_speed_tests {
                     format!("{:?}", base.animation_speed(base.alpha_quantizer, 67, true).speed_settings()),
                     "color speed overrides must not change alpha settings",
                 );
+            }
+        }
+    }
+}
+
+#[cfg(all(test, feature = "imazen"))]
+mod animation_coding_tests {
+    use super::*;
+
+    #[test]
+    fn animation_coding_configuration_matches_color_and_alpha_policy() {
+        for enabled in [false, true] {
+            let enc = Encoder::new().with_vaq(enabled, 2.0).with_seg_boost(1.5)
+                .with_still_image_tuning(enabled).with_trellis(enabled).with_lossless(enabled);
+            for alpha in [false, true] {
+                let mut config = EncoderConfig {
+                    quantizer: 155, min_quantizer: 155,
+                    enable_vaq: false, vaq_strength: 1.0, seg_boost: 1.0,
+                    enable_trellis: false, tune: Tune::Psychovisual,
+                    ..Default::default()
+                };
+                enc.configure_animation_coding(&mut config, alpha);
+                assert_eq!(config.quantizer, if enabled { 0 } else { 155 });
+                assert_eq!(config.min_quantizer, if enabled { 0 } else { 155 });
+                assert_eq!(config.enable_vaq, enabled && !alpha);
+                assert_eq!(config.vaq_strength, if alpha { 1.0 } else { 2.0 });
+                assert_eq!(config.seg_boost, if alpha { 1.0 } else { 1.5 });
+                assert_eq!(config.enable_trellis, enabled && !alpha);
+                assert_eq!(config.tune, if enabled && !alpha { Tune::StillImage } else { Tune::Psychovisual });
             }
         }
     }
