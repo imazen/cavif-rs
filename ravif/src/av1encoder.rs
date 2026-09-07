@@ -591,12 +591,26 @@ impl<'exif_slice> Encoder<'exif_slice> {
     pub(crate) fn animation_speed(&self, quantizer: u8, max_dimension: usize, is_alpha: bool) -> SpeedTweaks {
         #[cfg_attr(not(feature = "imazen"), allow(unused_mut))]
         let mut speed = SpeedTweaks::from_my_preset(self.speed, quantizer, max_dimension);
-        // Match the still-image policy: explicit color filter overrides do
+        // Match the still-image policy: explicit color speed overrides do
         // not change the independently configured monochrome alpha track.
         #[cfg(feature = "imazen")]
         if !is_alpha {
             if let Some(value) = self.override_cdef { speed.cdef = Some(value); }
             if let Some(value) = self.override_lrf { speed.lrf = Some(value); }
+            if let Some(value) = self.override_rdo_tx_decision { speed.rdo_tx_decision = Some(value); }
+            if let Some(value) = self.override_sgr_complexity { speed.sgr_complexity_full = Some(value); }
+            if let Some(value) = self.override_lru_on_skip { speed.lru_on_skip = Some(value); }
+            if let Some(value) = self.override_segmentation_complex {
+                speed.segmentation = Some(if value { SegmentationLevel::Complex } else { SegmentationLevel::Simple });
+            }
+            if let Some(value) = self.override_encode_bottomup { speed.encode_bottomup = Some(value); }
+            if let Some(value) = self.override_partition_range { speed.partition_range = Some(value); }
+            if let Some(value) = self.override_complex_prediction_modes {
+                speed.complex_prediction_modes = Some(value);
+                // An explicit mode override owns this axis, including at s6–s8.
+                speed.intra_top7 = None;
+            }
+            if let Some(value) = self.override_fast_deblock { speed.fast_deblock = Some(value); }
         }
         #[cfg(not(feature = "imazen"))]
         let _ = is_alpha;
@@ -2890,4 +2904,47 @@ fn encode_to_av1<P: zenrav1e::Pixel>(
         }
     }
     Ok(out)
+}
+
+#[cfg(all(test, feature = "__expert"))]
+mod animation_speed_tests {
+    use super::*;
+
+    #[test]
+    fn animation_speed_overrides_replace_presets_and_preserve_alpha() {
+        for preset in [1, 6, 8, 10] {
+            for value in [false, true] {
+                let base = Encoder::new().with_speed(preset);
+                let params = crate::expert::InternalParams {
+                    partition_range: Some((4, 16)),
+                    complex_prediction_modes: Some(value),
+                    lrf: Some(value),
+                    fast_deblock: Some(value),
+                    ..Default::default()
+                };
+                let enc = base.clone().with_internal_params(params)
+                    .with_cdef(Some(value)).with_rdo_tx_decision(Some(value))
+                    .with_sgr_full(Some(value)).with_lru_on_skip(Some(value))
+                    .with_segmentation_complex(Some(value)).with_encode_bottomup(Some(value));
+                let speed = enc.animation_speed(enc.quantizer, 67, false);
+                assert_eq!(speed.partition_range, Some((4, 16)));
+                assert_eq!(speed.intra_top7, None);
+                let settings = speed.speed_settings();
+                assert_eq!(settings.cdef, value);
+                assert_eq!(settings.lrf, value);
+                assert_eq!(settings.fast_deblock, value);
+                assert_eq!(settings.transform.rdo_tx_decision, value);
+                assert_eq!(settings.lru_on_skip, value);
+                assert_eq!(settings.partition.encode_bottomup, value);
+                assert_eq!(settings.sgr_complexity, if value { SGRComplexityLevel::Full } else { SGRComplexityLevel::Reduced });
+                assert_eq!(settings.segmentation, if value { SegmentationLevel::Complex } else { SegmentationLevel::Simple });
+                assert_eq!(settings.prediction.prediction_modes, if value { PredictionModesSetting::ComplexAll } else { PredictionModesSetting::Simple });
+                assert_eq!(
+                    format!("{:?}", enc.animation_speed(enc.alpha_quantizer, 67, true).speed_settings()),
+                    format!("{:?}", base.animation_speed(base.alpha_quantizer, 67, true).speed_settings()),
+                    "color speed overrides must not change alpha settings",
+                );
+            }
+        }
+    }
 }
