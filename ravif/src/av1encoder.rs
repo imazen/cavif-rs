@@ -588,6 +588,14 @@ impl<'exif_slice> Encoder<'exif_slice> {
         self.exif = Some(exif_data.into());
     }
 
+    pub(crate) fn configure_animation_threads(&self, config: Config) -> Config {
+        match self.threads {
+            Some(0) => config.with_threads(rayon::current_num_threads()),
+            Some(threads) => config.with_threads(threads),
+            None => config,
+        }
+    }
+
     pub(crate) fn animation_control(&self) -> crate::animated::AnimationControl {
         crate::animated::AnimationControl {
             cancellation_token: self.cancellation_token.clone(),

@@ -2,6 +2,10 @@
 
 ## [Unreleased]
 
+### Animation thread forwarding (2026-09-07)
+
+- Apply the requested thread-pool size to animation color and alpha encoding, matching still-image settings. Verified live worker counts and byte-identical two-frame output across thread settings; see `benchmarks/animation_threads_2026-09-07.md`.
+
 ### Animation cancellation correction (2026-09-07, 294cd9ee)
 
 - Honor cancellation tokens and one shared timeout across animation preparation, color/alpha tracks and serialization. With the `stop` feature, forward the combined control to zenrav1e's per-superblock checks and preserve `Error::Cancelled`.

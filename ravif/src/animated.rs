@@ -411,7 +411,7 @@ fn encode_sequence_av1<P: Pixel + Default>(
         ..Default::default()
     };
 
-    let cfg = Config::new().with_encoder_config(config);
+    let cfg = enc.configure_animation_threads(Config::new().with_encoder_config(config));
     // Consume zenrav1e's bare `InvalidConfig` and trace it here (pre-loop
     // boundary). `Error::from` preserves the rav1e reason string.
     // TODO(whereat): when this crate bumps to zenrav1e ^0.2.0 (which returns
