@@ -4,3 +4,11 @@ arm-integration-audit:
     CARGO_BUILD_JOBS=4 RAYON_NUM_THREADS=4 OMP_NUM_THREADS=4 RUST_TEST_THREADS=4 TMPDIR="$HOME/tmp" nice -n19 cargo test -p zenravif
     CARGO_BUILD_JOBS=4 RAYON_NUM_THREADS=4 OMP_NUM_THREADS=4 RUST_TEST_THREADS=4 TMPDIR="$HOME/tmp" nice -n19 cargo test -p zenravif --no-default-features --features threading
     CARGO_BUILD_JOBS=4 RAYON_NUM_THREADS=4 OMP_NUM_THREADS=4 RUST_TEST_THREADS=4 TMPDIR="$HOME/tmp" nice -n19 cargo test -p zenravif --features __expert,stop
+
+# Regenerate the public-API surface snapshots (docs/public-api/)
+api-doc:
+    cargo test --manifest-path apidoc/Cargo.toml
+
+# Verify the committed snapshots are current
+api-doc-check:
+    ZEN_API_DOC=check cargo test --manifest-path apidoc/Cargo.toml

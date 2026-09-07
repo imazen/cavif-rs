@@ -1,0 +1,63 @@
+# zenravif public API — doc(hidden) items and excluded-feature surface
+# excluded features: __expert
+# (regenerated on every `cargo test` by zenutils-apidoc; ZEN_API_DOC=check verifies, =off skips).
+# Encodings: crate-name prefix stripped; auto traits collapse to a
+# count + exceptions; trait impls collapse to one roster line per
+# type (method signatures live at the trait definition); blanket
+# impls omitted; re-export duplicates annotated `[also: path]`.
+# DO NOT EDIT BY HAND — commit regenerated changes with the code.
+
+## summary
+#
+#   pub modules                                 1
+#   pub types (struct/enum/trait/alias)         3
+#   inherent methods                           15
+#   struct fields                               5
+#   enum variants                               1
+#   trait roster entries (type × trait)        12
+#   auto-trait-complete types                   1
+#
+# per-module pub lines:
+#   (root)                           16
+#   expert                            9
+
+## items (25 lines)
+
+#[non_exhaustive] pub struct expert::InternalParams
+pub fn AlphaColorMode::assert_fields_are_eq(&self)
+pub fn BitDepth::assert_fields_are_eq(&self)
+pub fn ChromaSubsampling::assert_fields_are_eq(&self)
+pub fn ColorModel::assert_fields_are_eq(&self)
+pub fn Encoder<'exif_slice>::with_depth(self, core::option::Option<u8>) -> Self
+pub fn Encoder<'exif_slice>::with_internal_color_space(self, ColorModel) -> Self
+pub fn Encoder<'exif_slice>::with_internal_params(self, expert::InternalParams) -> Self
+pub fn EncodingErrorDetail::assert_fields_are_eq(&self)
+pub fn EncodingErrorDetail::clone(&self) -> EncodingErrorDetail
+pub fn EncodingErrorDetail::eq(&self, &EncodingErrorDetail) -> bool
+pub fn EncodingErrorDetail::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+pub fn EncodingErrorDetail::reason(&self) -> &str
+pub fn expert::InternalParams::clone(&self) -> expert::InternalParams
+pub fn expert::InternalParams::default() -> expert::InternalParams
+pub fn expert::InternalParams::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+pub mod expert
+pub struct EncodingErrorDetail
+pub type ColorSpace = ColorModel
+pub Error::EncodingError(EncodingErrorDetail)
+pub expert::InternalParams::complex_prediction_modes: core::option::Option<bool>
+pub expert::InternalParams::fast_deblock: core::option::Option<bool>
+pub expert::InternalParams::lrf: core::option::Option<bool>
+pub expert::InternalParams::partition_range: core::option::Option<(u8, u8)>
+pub expert::InternalParams::sb_q_scale: core::option::Option<alloc::boxed::Box<[f32]>>
+
+## trait impls (6 types)
+
+AlphaColorMode: TrivialClone
+BitDepth: TrivialClone
+ChromaSubsampling: TrivialClone
+ColorModel: TrivialClone
+EncodingErrorDetail: Clone, Debug, Display, Eq, PartialEq
+expert::InternalParams: Clone, Debug, Default
+
+## auto traits
+
+1 types implement all of: Freeze, RefUnwindSafe, Send, Sync, Unpin, UnwindSafe
