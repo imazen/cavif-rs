@@ -35,3 +35,28 @@ fn animation_honors_direct_stop_in_every_format() {
     token.cancel();
     check_all_formats(&Encoder::new().with_speed(10).with_stop(zenravif::StopToken::new(token)));
 }
+
+#[cfg(feature = "stop")]
+#[test]
+fn borrowed_animation_stop_is_polled_inside_pixel_preparation() {
+    use std::sync::atomic::{AtomicUsize,Ordering};
+    struct PollLimit(AtomicUsize);
+    impl almost_enough::Stop for PollLimit {
+        fn check(&self)->Result<(),almost_enough::StopReason> {
+            if self.0.fetch_add(1,Ordering::Relaxed)>=8 { Err(almost_enough::StopReason::Cancelled) } else { Ok(()) }
+        }
+    }
+    for rgba in [false,true] {
+        let stop=PollLimit(AtomicUsize::new(0));
+        let enc=Encoder::new().with_speed(10).with_animation_stop_ref(&stop);
+        let result=if rgba {
+            let pixels=vec![RGBA8::new(40,90,180,128);128*256];
+            enc.encode_animation_rgba(&[AnimFrameRgba { rgba:Img::new(&pixels,128,256),duration_ms:20 }])
+        } else {
+            let pixels=vec![RGB8::new(40,90,180);128*256];
+            enc.encode_animation_rgb(&[AnimFrame { rgb:Img::new(&pixels,128,256),duration_ms:20 }])
+        };
+        assert!(matches!(result.as_ref().map_err(|e|e.error()),Err(Error::Cancelled)));
+        assert!(stop.0.load(Ordering::Relaxed)>8);
+    }
+}

@@ -195,9 +195,20 @@ pub struct EncodedImage {
     pub alpha_byte_size: usize,
 }
 
+#[cfg(feature = "stop")]
+#[derive(Clone, Copy)]
+struct AnimationStopRef<'a>(&'a dyn almost_enough::Stop);
+#[cfg(feature = "stop")]
+impl core::fmt::Debug for AnimationStopRef<'_> {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        f.write_str("AnimationStopRef(..)")
+    }
+}
+
 /// Encoder config builder
 ///
-/// The lifetime is relevant only for [`Encoder::with_exif()`]. Use `Encoder<'static>` if Rust complains.
+/// The lifetime covers borrowed EXIF and per-call animation cancellation.
+/// Use `Encoder<'static>` when neither is borrowed.
 #[derive(Debug, Clone)]
 pub struct Encoder<'exif_slice> {
     /// 0-255 scale
@@ -234,6 +245,9 @@ pub struct Encoder<'exif_slice> {
     /// per-superblock cancellation via `Context::set_stop()`.
     #[cfg(feature = "stop")]
     stop_token: Option<almost_enough::StopToken>,
+    /// Borrowed per-operation cancellation, checked at animation row/packet boundaries.
+    #[cfg(feature = "stop")]
+    animation_stop: Option<AnimationStopRef<'exif_slice>>,
     /// Optional timeout duration for encoding
     timeout: Option<std::time::Duration>,
     /// Override color primaries (default: BT709 for sRGB)
@@ -343,6 +357,8 @@ impl<'exif_slice> Default for Encoder<'exif_slice> {
             cancellation_token: None,
             #[cfg(feature = "stop")]
             stop_token: None,
+            #[cfg(feature = "stop")]
+            animation_stop: None,
             timeout: None,
             color_primaries: None,
             transfer_characteristics: None,
@@ -661,12 +677,38 @@ impl<'exif_slice> Encoder<'exif_slice> {
         }
     }
 
-    pub(crate) fn animation_control(&self) -> crate::animated::AnimationControl {
+    /// Attach a borrowed animation cancellation check. This supplements the
+    /// owned token from `with_stop`: the owned token reaches AV1 superblocks,
+    /// while this check runs during pixel preparation and between packets.
+    #[cfg(feature = "stop")]
+    pub fn with_animation_stop_ref<'call>(self, stop: &'call dyn almost_enough::Stop) -> Encoder<'call>
+    where 'exif_slice: 'call {
+        let mut encoder: Encoder<'call> = self;
+        encoder.animation_stop=Some(AnimationStopRef(stop));
+        encoder
+    }
+
+    // Native animation inputs carry integer codes, not normalized U16.
+    // Auto retains the historical U8→8 / U16→10 behavior. An explicit depth
+    // must use an entry point whose word type can represent that code domain.
+    pub(crate) fn animation_depth(&self, high_storage: bool) -> core::result::Result<u8, Error> {
+        match (self.output_depth, high_storage) {
+            (BitDepth::Auto, false) | (BitDepth::Eight, false) => Ok(8),
+            (BitDepth::Auto, true) | (BitDepth::Ten, true) => Ok(10),
+            (BitDepth::Twelve, true) => Ok(12),
+            _ => Err(Error::Unsupported("animation input type must match the requested code depth; use U16 codes for 10/12-bit output")),
+        }
+    }
+
+    pub(crate) fn animation_control(&self) -> crate::animated::AnimationControl<'_> {
         crate::animated::AnimationControl {
             cancellation_token: self.cancellation_token.clone(),
             deadline: self.timeout.and_then(|t| std::time::Instant::now().checked_add(t)),
             #[cfg(feature = "stop")]
             stop_token: self.stop_token.clone(),
+            #[cfg(feature = "stop")]
+            call_stop: self.animation_stop.map(|stop| stop.0),
+            marker: core::marker::PhantomData,
         }
     }
 
