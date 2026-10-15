@@ -6,7 +6,7 @@ Supports still images, animated sequences, HDR metadata, chroma subsampling, and
 
 ## Fork of ravif
 
-Forked from [ravif](https://lib.rs/crates/ravif) v0.13.0 by Kornel Lesinski. Uses [zenrav1e](https://lib.rs/crates/zenrav1e) (Imazen's rav1e fork) instead of upstream rav1e.
+Forked from [ravif](https://lib.rs/crates/ravif) v0.13.0 by Kornel Lesiński. Uses [zenrav1e](https://lib.rs/crates/zenrav1e) (Imazen's rav1e fork) instead of upstream rav1e.
 
 Changes from upstream:
 - **Animation** — `encode_animation_rgb`, `encode_animation_rgba`, 16-bit variants

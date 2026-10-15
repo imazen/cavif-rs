@@ -429,7 +429,8 @@ fn encoder_time_base(timescale: u32, durations: &[u32]) -> Rational {
 
 // ---- Encoding helpers ----
 
-#[cfg(test)]
+// Only the stop tests call it.
+#[cfg(all(test, feature = "stop"))]
 fn encode_sequence_av1<P: Pixel + Default>(
     enc: &crate::Encoder<'_>, control: &AnimationControl<'_>, dims: (usize, usize), num_frames: usize,
     init_frame: impl Fn(usize, &mut Frame<P>) -> core::result::Result<(), Error>,

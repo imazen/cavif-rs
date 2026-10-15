@@ -1,0 +1,51 @@
+# zenravif public API — additions from non-default features
+# features: asm,imazen,stop,threading
+# (regenerated on every `cargo test` by zenutils-apidoc; ZEN_API_DOC=check verifies, =off skips).
+# Encodings: crate-name prefix stripped; auto traits collapse to a
+# count + exceptions; trait impls collapse to one roster line per
+# type (method signatures live at the trait definition); blanket
+# impls omitted; re-export duplicates annotated `[also: path]`.
+# DO NOT EDIT BY HAND — commit regenerated changes with the code.
+
+## summary
+#
+#   pub consts/statics                          1
+#   inherent methods                           13
+#   re-exports                                  1
+#   trait roster entries (type × trait)         1
+#   auto-trait exceptions                       1
+#
+# per-module pub lines:
+#   (root)                           15
+
+## items (15 lines)
+
+pub use StopToken
+pub fn Encoder<'exif_slice>::with_cdef(self, core::option::Option<bool>) -> Self
+pub fn Encoder<'exif_slice>::with_encode_bottomup(self, core::option::Option<bool>) -> Self
+pub fn Encoder<'exif_slice>::with_lossless(self, bool) -> Self
+pub fn Encoder<'exif_slice>::with_lru_on_skip(self, core::option::Option<bool>) -> Self
+pub fn Encoder<'exif_slice>::with_qm(self, bool) -> Self
+pub fn Encoder<'exif_slice>::with_rdo_tx_decision(self, core::option::Option<bool>) -> Self
+pub fn Encoder<'exif_slice>::with_seg_boost(self, f64) -> Self
+pub fn Encoder<'exif_slice>::with_segmentation_complex(self, core::option::Option<bool>) -> Self
+pub fn Encoder<'exif_slice>::with_sgr_full(self, core::option::Option<bool>) -> Self
+pub fn Encoder<'exif_slice>::with_still_image_tuning(self, bool) -> Self
+pub fn Encoder<'exif_slice>::with_stop(self, almost_enough::stop_token::StopToken) -> Self
+pub fn Encoder<'exif_slice>::with_trellis(self, bool) -> Self
+pub fn Encoder<'exif_slice>::with_vaq(self, bool, f64) -> Self
+pub const FRAME_HINTS_LIVE: bool
+
+## trait impls (1 types)
+
+CancellationToken: enough::Stop
+
+## auto traits
+
+0 types implement all of: Freeze, RefUnwindSafe, Send, Sync, Unpin, UnwindSafe
+Encoder<'exif_slice>: !Freeze !RefUnwindSafe !Send !Sync !Unpin !UnwindSafe
+
+## removed by features (2 lines)
+
+impl<'exif_slice> core::panic::unwind_safe::RefUnwindSafe for Encoder<'exif_slice>
+impl<'exif_slice> core::panic::unwind_safe::UnwindSafe for Encoder<'exif_slice>
