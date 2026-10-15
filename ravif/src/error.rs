@@ -58,6 +58,10 @@ quick_error! {
         Unsupported(msg: &'static str) {
             display("Not supported: {}", msg)
         }
+        /// Invalid animation container configuration or serialization failure.
+        SerializationError(message: String) {
+            display("AVIF serialization failed: {}", message)
+        }
         /// Encoding was cancelled via a cancellation token
         Cancelled {
             display("Encoding was cancelled")

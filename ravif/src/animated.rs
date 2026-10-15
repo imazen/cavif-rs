@@ -3,7 +3,6 @@
 //! Encodes a sequence of frames into an animated AVIF file using
 //! rav1e's video encoding mode and a minimal ISOBMFF muxer.
 
-use crate::av1encoder::SpeedTweaks;
 use crate::error::Error;
 use crate::Result;
 use whereat::{at, ResultAtExt as _};
@@ -31,22 +30,31 @@ pub struct AnimFrameRgba<'a> {
     pub duration_ms: u32,
 }
 
-/// A single frame in an animated sequence (16-bit RGB, 10-bit values 0–1023)
+/// A single frame in an animated sequence (U16 RGB, low 10/12-bit codes selected by BitDepth)
 #[derive(Clone)]
 pub struct AnimFrame16<'a> {
-    /// Frame pixel data (RGB16, 10-bit values)
+    /// Frame pixel data (RGB16, low 10/12-bit codes)
     pub rgb: ImgRef<'a, rgb::RGB<u16>>,
     /// Duration of this frame in milliseconds
     pub duration_ms: u32,
 }
 
-/// A single frame with alpha in an animated sequence (16-bit RGBA, 10-bit values 0–1023)
+/// A single frame with alpha in an animated sequence (U16 RGBA, low 10/12-bit codes selected by BitDepth)
 #[derive(Clone)]
 pub struct AnimFrameRgba16<'a> {
-    /// Frame pixel data (RGBA16, 10-bit values)
+    /// Frame pixel data (RGBA16, low 10/12-bit codes)
     pub rgba: ImgRef<'a, rgb::RGBA<u16>>,
     /// Duration of this frame in milliseconds
     pub duration_ms: u32,
+}
+
+/// A frame with an exact duration in the timescale passed to a timed encoder.
+#[derive(Clone)]
+pub struct TimedAnimFrame<'a, P: Copy> {
+    /// Borrowed pixel rows, including optional stride padding.
+    pub pixels: ImgRef<'a, P>,
+    /// Positive duration in timescale ticks.
+    pub duration_ticks: u32,
 }
 
 /// Result of animated AVIF encoding
@@ -57,226 +65,403 @@ pub struct EncodedAnimation {
     pub avif_file: Vec<u8>,
     /// Number of frames encoded
     pub frame_count: usize,
-    /// Total duration in milliseconds
+    /// Total duration in milliseconds, rounded down for non-millisecond timing.
     pub total_duration_ms: u64,
+    /// Exact total duration in `timescale` ticks.
+    pub total_duration_ticks: u64,
+    /// Number of timing ticks per second.
+    pub timescale: u32,
+}
+
+/// One deadline covers preparation, both tracks, and muxing.
+#[derive(Clone)]
+pub(crate) struct AnimationControl<'a> {
+    pub(crate) cancellation_token: Option<crate::CancellationToken>,
+    pub(crate) deadline: Option<std::time::Instant>,
+    #[cfg(feature = "stop")]
+    pub(crate) stop_token: Option<almost_enough::StopToken>,
+    #[cfg(feature = "stop")]
+    pub(crate) call_stop: Option<&'a dyn almost_enough::Stop>,
+    pub(crate) marker: core::marker::PhantomData<&'a ()>,
+}
+
+impl AnimationControl<'_> {
+    fn check(&self) -> core::result::Result<(), Error> {
+        if self.cancellation_token.as_ref().is_some_and(|t| t.is_cancelled())
+            || self.deadline.is_some_and(|d| std::time::Instant::now() >= d) {
+            return Err(Error::Cancelled);
+        }
+        #[cfg(feature = "stop")]
+        if self.stop_token.as_ref().is_some_and(|t| almost_enough::Stop::check(t).is_err()) {
+            return Err(Error::Cancelled);
+        }
+        #[cfg(feature = "stop")]
+        if self.call_stop.is_some_and(|t| t.check().is_err()) { return Err(Error::Cancelled); }
+        Ok(())
+    }
+
+    #[cfg(feature = "stop")]
+    fn owned(&self) -> AnimationControl<'static> {
+        AnimationControl { cancellation_token:self.cancellation_token.clone(),deadline:self.deadline,
+            stop_token:self.stop_token.clone(),call_stop:None,marker:core::marker::PhantomData }
+    }
+}
+
+#[cfg(feature = "stop")]
+impl almost_enough::Stop for AnimationControl<'_> {
+    fn check(&self) -> core::result::Result<(), almost_enough::StopReason> {
+        self.check().map_err(|_| almost_enough::StopReason::Cancelled)
+    }
 }
 
 const BT601: [f32; 3] = [0.2990, 0.5870, 0.1140];
 
 impl crate::Encoder<'_> {
+    /// Encode RGB frames with millisecond durations.
+    pub fn encode_animation_rgb(&self, frames: &[AnimFrame<'_>]) -> Result<EncodedAnimation> {
+        let control = self.animation_control();
+        control.check().map_err(|e| at!(e))?;
+        let timed: Vec<_> = frames.iter().map(|f| TimedAnimFrame { pixels: f.rgb, duration_ticks: f.duration_ms }).collect();
+        self.encode_animation_rgb_timed_controlled(&timed, 1000, control)
+    }
+
+    /// Encode RGBA frames with millisecond durations.
+    pub fn encode_animation_rgba(&self, frames: &[AnimFrameRgba<'_>]) -> Result<EncodedAnimation> {
+        let control = self.animation_control();
+        control.check().map_err(|e| at!(e))?;
+        let timed: Vec<_> = frames.iter().map(|f| TimedAnimFrame { pixels: f.rgba, duration_ticks: f.duration_ms }).collect();
+        self.encode_animation_rgba_timed_controlled(&timed, 1000, control)
+    }
+
+    /// Encode RGB16 frames with millisecond durations.
+    pub fn encode_animation_rgb16(&self, frames: &[AnimFrame16<'_>]) -> Result<EncodedAnimation> {
+        let control = self.animation_control();
+        control.check().map_err(|e| at!(e))?;
+        let timed: Vec<_> = frames.iter().map(|f| TimedAnimFrame { pixels: f.rgb, duration_ticks: f.duration_ms }).collect();
+        self.encode_animation_rgb16_timed_controlled(&timed, 1000, control)
+    }
+
+    /// Encode RGBA16 frames with millisecond durations.
+    pub fn encode_animation_rgba16(&self, frames: &[AnimFrameRgba16<'_>]) -> Result<EncodedAnimation> {
+        let control = self.animation_control();
+        control.check().map_err(|e| at!(e))?;
+        let timed: Vec<_> = frames.iter().map(|f| TimedAnimFrame { pixels: f.rgba, duration_ticks: f.duration_ms }).collect();
+        self.encode_animation_rgba16_timed_controlled(&timed, 1000, control)
+    }
+
     /// Encode a sequence of 8-bit RGB frames into an animated AVIF.
     ///
-    /// Each frame has its own duration in milliseconds. All frames must have
+    /// Each frame has an exact tick duration; `timescale` gives ticks per second. All frames must have
     /// the same dimensions.
-    pub fn encode_animation_rgb(&self, frames: &[AnimFrame<'_>]) -> Result<EncodedAnimation> {
+    pub fn encode_animation_rgb_timed(&self, frames: &[TimedAnimFrame<'_, RGB8>], timescale: u32) -> Result<EncodedAnimation> {
+        self.encode_animation_rgb_timed_controlled(frames, timescale, self.animation_control())
+    }
+
+    fn encode_animation_rgb_timed_controlled(&self, frames: &[TimedAnimFrame<'_, RGB8>], timescale: u32, control: AnimationControl<'_>) -> Result<EncodedAnimation> {
+        control.check().map_err(|e| at!(e))?;
+        let _ = self.animation_depth(false).map_err(|e| at!(e))?;
+        if timescale == 0 { return Err(at!(Error::Unsupported("animation timescale must be > 0"))); }
         if frames.is_empty() {
             return Err(at!(Error::Unsupported("empty frame sequence")));
         }
 
-        let width = frames[0].rgb.width();
-        let height = frames[0].rgb.height();
+        let width = frames[0].pixels.width();
+        let height = frames[0].pixels.height();
 
         for f in frames {
-            if f.rgb.width() != width || f.rgb.height() != height {
+            control.check().map_err(|e| at!(e))?;
+            if f.pixels.width() != width || f.pixels.height() != height {
                 return Err(at!(Error::Unsupported("all frames must have the same dimensions")));
             }
-            if f.duration_ms == 0 {
+            if f.duration_ticks == 0 {
                 return Err(at!(Error::Unsupported("frame duration must be > 0")));
             }
         }
 
-        let durations_ms: Vec<u32> = frames.iter().map(|f| f.duration_ms).collect();
+        let durations_ticks: Vec<u32> = frames.iter().map(|f| f.duration_ticks).collect();
 
-        let encoded_frames = encode_sequence_av1::<u8>(
-            self, width, height,
+        let encoded_frames = encode_sequence_av1_timed::<u8>(
+            self, &control, (width, height),
             frames.len(),
             |frame_idx, rav1e_frame| {
                 let f = &frames[frame_idx];
-                fill_frame_rgb8_420(rav1e_frame, width, height, f.rgb)?;
+                fill_frame_rgb8_420(self, rav1e_frame, f.pixels, &control)?;
                 Ok(())
             },
             false,
-            8,
+            (8, encoder_time_base(timescale, &durations_ticks)),
         ).at()?;
 
-        assemble_animation(self, width, height, &encoded_frames, &durations_ms, None, 8).at()
+        control.check().map_err(|e| at!(e))?;
+        let result = assemble_animation(self, width, height, &encoded_frames, &durations_ticks, None, (8, timescale)).at()?;
+        control.check().map_err(|e| at!(e))?;
+        Ok(result)
     }
 
     /// Encode a sequence of 8-bit RGBA frames into an animated AVIF.
     ///
     /// If any frame has non-opaque alpha, an alpha track is included.
-    pub fn encode_animation_rgba(&self, frames: &[AnimFrameRgba<'_>]) -> Result<EncodedAnimation> {
+    pub fn encode_animation_rgba_timed(&self, frames: &[TimedAnimFrame<'_, RGBA8>], timescale: u32) -> Result<EncodedAnimation> {
+        self.encode_animation_rgba_timed_controlled(frames, timescale, self.animation_control())
+    }
+
+    fn encode_animation_rgba_timed_controlled(&self, frames: &[TimedAnimFrame<'_, RGBA8>], timescale: u32, control: AnimationControl<'_>) -> Result<EncodedAnimation> {
+        control.check().map_err(|e| at!(e))?;
+        let _ = self.animation_depth(false).map_err(|e| at!(e))?;
+        if timescale == 0 { return Err(at!(Error::Unsupported("animation timescale must be > 0"))); }
         if frames.is_empty() {
             return Err(at!(Error::Unsupported("empty frame sequence")));
         }
 
-        let width = frames[0].rgba.width();
-        let height = frames[0].rgba.height();
+        let width = frames[0].pixels.width();
+        let height = frames[0].pixels.height();
 
         for f in frames {
-            if f.rgba.width() != width || f.rgba.height() != height {
+            control.check().map_err(|e| at!(e))?;
+            if f.pixels.width() != width || f.pixels.height() != height {
                 return Err(at!(Error::Unsupported("all frames must have the same dimensions")));
             }
-            if f.duration_ms == 0 {
+            if f.duration_ticks == 0 {
                 return Err(at!(Error::Unsupported("frame duration must be > 0")));
             }
         }
 
-        let has_alpha = frames.iter().any(|f| f.rgba.pixels().any(|px| px.a != 255));
-        let durations_ms: Vec<u32> = frames.iter().map(|f| f.duration_ms).collect();
+        let mut has_alpha = false;
+        'alpha_scan: for f in frames {
+            for row in f.pixels.rows() {
+                control.check().map_err(|e| at!(e))?;
+                if row.iter().any(|px| px.a != 255) {
+                    has_alpha = true;
+                    break 'alpha_scan;
+                }
+            }
+        }
+        let durations_ticks: Vec<u32> = frames.iter().map(|f| f.duration_ticks).collect();
 
         // Encode color track
-        let color_frames = encode_sequence_av1::<u8>(
-            self, width, height,
+        let color_frames = encode_sequence_av1_timed::<u8>(
+            self, &control, (width, height),
             frames.len(),
             |frame_idx, rav1e_frame| {
                 let f = &frames[frame_idx];
-                fill_frame_rgba8_color_420(rav1e_frame, width, height, f.rgba)?;
+                fill_frame_rgba8_color_420(self, rav1e_frame, f.pixels, self.premultiplied_alpha, &control)?;
                 Ok(())
             },
             false,
-            8,
+            (8, encoder_time_base(timescale, &durations_ticks)),
         ).at()?;
 
         // Encode alpha track if needed
         let alpha_frames = if has_alpha {
-            Some(encode_sequence_av1::<u8>(
-                self, width, height,
+            Some(encode_sequence_av1_timed::<u8>(
+                self, &control, (width, height),
                 frames.len(),
                 |frame_idx, rav1e_frame| {
                     let f = &frames[frame_idx];
-                    fill_frame_alpha8(rav1e_frame, width, height, f.rgba)?;
+                    fill_frame_alpha8(rav1e_frame, width, height, f.pixels, &control)?;
                     Ok(())
                 },
                 true,
-                8,
+                (8, encoder_time_base(timescale, &durations_ticks)),
             ).at()?)
         } else {
             None
         };
 
-        assemble_animation(self, width, height, &color_frames, &durations_ms, alpha_frames.as_deref(), 8).at()
+        control.check().map_err(|e| at!(e))?;
+        let result = assemble_animation(self, width, height, &color_frames, &durations_ticks, alpha_frames.as_deref(), (8, timescale)).at()?;
+        control.check().map_err(|e| at!(e))?;
+        Ok(result)
     }
 
-    /// Encode a sequence of 16-bit RGB frames into an animated AVIF (10-bit AV1).
+    /// Encode a sequence of 16-bit RGB frames into an animated AVIF (10/12-bit AV1).
     ///
-    /// Input values should be in 10-bit range (0–1023). All frames must have
+    /// Input values are codes: 0–1023 for Auto/Ten, or 0–4095 for Twelve. All frames must have
     /// the same dimensions.
-    pub fn encode_animation_rgb16(&self, frames: &[AnimFrame16<'_>]) -> Result<EncodedAnimation> {
-        if frames.is_empty() {
-            return Err(at!(Error::Unsupported("empty frame sequence")));
-        }
-
-        let width = frames[0].rgb.width();
-        let height = frames[0].rgb.height();
-
-        for f in frames {
-            if f.rgb.width() != width || f.rgb.height() != height {
-                return Err(at!(Error::Unsupported("all frames must have the same dimensions")));
-            }
-            if f.duration_ms == 0 {
-                return Err(at!(Error::Unsupported("frame duration must be > 0")));
-            }
-        }
-
-        let durations_ms: Vec<u32> = frames.iter().map(|f| f.duration_ms).collect();
-
-        let encoded_frames = encode_sequence_av1::<u16>(
-            self, width, height,
-            frames.len(),
-            |frame_idx, rav1e_frame| {
-                let f = &frames[frame_idx];
-                fill_frame_rgb16_420(rav1e_frame, width, height, f.rgb)?;
-                Ok(())
-            },
-            false,
-            10,
-        ).at()?;
-
-        assemble_animation(self, width, height, &encoded_frames, &durations_ms, None, 10).at()
+    pub fn encode_animation_rgb16_timed(&self, frames: &[TimedAnimFrame<'_, rgb::RGB<u16>>], timescale: u32) -> Result<EncodedAnimation> {
+        self.encode_animation_rgb16_timed_controlled(frames, timescale, self.animation_control())
     }
 
-    /// Encode a sequence of 16-bit RGBA frames into an animated AVIF (10-bit AV1).
-    ///
-    /// Input values should be in 10-bit range (0–1023). If any frame has
-    /// non-opaque alpha, an alpha track is included.
-    pub fn encode_animation_rgba16(&self, frames: &[AnimFrameRgba16<'_>]) -> Result<EncodedAnimation> {
+    fn encode_animation_rgb16_timed_controlled(&self, frames: &[TimedAnimFrame<'_, rgb::RGB<u16>>], timescale: u32, control: AnimationControl<'_>) -> Result<EncodedAnimation> {
+        control.check().map_err(|e| at!(e))?;
+        let depth = self.animation_depth(true).map_err(|e| at!(e))?;
+        if timescale == 0 { return Err(at!(Error::Unsupported("animation timescale must be > 0"))); }
         if frames.is_empty() {
             return Err(at!(Error::Unsupported("empty frame sequence")));
         }
 
-        let width = frames[0].rgba.width();
-        let height = frames[0].rgba.height();
+        let width = frames[0].pixels.width();
+        let height = frames[0].pixels.height();
 
         for f in frames {
-            if f.rgba.width() != width || f.rgba.height() != height {
+            control.check().map_err(|e| at!(e))?;
+            if f.pixels.width() != width || f.pixels.height() != height {
                 return Err(at!(Error::Unsupported("all frames must have the same dimensions")));
             }
-            if f.duration_ms == 0 {
+            if f.duration_ticks == 0 {
                 return Err(at!(Error::Unsupported("frame duration must be > 0")));
+            }
+            let max = (1u16 << depth) - 1;
+            for row in f.pixels.rows() {
+                control.check().map_err(|e| at!(e))?;
+                if row.iter().any(|p| p.r > max || p.g > max || p.b > max) {
+                    return Err(at!(Error::Unsupported("animation sample exceeds its declared code depth")));
+                }
             }
         }
 
-        let has_alpha = frames.iter().any(|f| f.rgba.pixels().any(|px| px.a != 1023));
-        let durations_ms: Vec<u32> = frames.iter().map(|f| f.duration_ms).collect();
+        let durations_ticks: Vec<u32> = frames.iter().map(|f| f.duration_ticks).collect();
 
-        // Encode color track
-        let color_frames = encode_sequence_av1::<u16>(
-            self, width, height,
+        let encoded_frames = encode_sequence_av1_timed::<u16>(
+            self, &control, (width, height),
             frames.len(),
             |frame_idx, rav1e_frame| {
                 let f = &frames[frame_idx];
-                fill_frame_rgba16_color_420(rav1e_frame, width, height, f.rgba)?;
+                fill_frame_rgb16_420(self, rav1e_frame, f.pixels, depth, &control)?;
                 Ok(())
             },
             false,
-            10,
+            (depth, encoder_time_base(timescale, &durations_ticks)),
+        ).at()?;
+
+        control.check().map_err(|e| at!(e))?;
+        let result = assemble_animation(self, width, height, &encoded_frames, &durations_ticks, None, (depth, timescale)).at()?;
+        control.check().map_err(|e| at!(e))?;
+        Ok(result)
+    }
+
+    /// Encode a sequence of 16-bit RGBA frames into an animated AVIF (10/12-bit AV1).
+    ///
+    /// Input values are codes: 0–1023 for Auto/Ten, or 0–4095 for Twelve. If any frame has
+    /// non-opaque alpha, an alpha track is included.
+    pub fn encode_animation_rgba16_timed(&self, frames: &[TimedAnimFrame<'_, rgb::RGBA<u16>>], timescale: u32) -> Result<EncodedAnimation> {
+        self.encode_animation_rgba16_timed_controlled(frames, timescale, self.animation_control())
+    }
+
+    fn encode_animation_rgba16_timed_controlled(&self, frames: &[TimedAnimFrame<'_, rgb::RGBA<u16>>], timescale: u32, control: AnimationControl<'_>) -> Result<EncodedAnimation> {
+        control.check().map_err(|e| at!(e))?;
+        let depth = self.animation_depth(true).map_err(|e| at!(e))?;
+        if timescale == 0 { return Err(at!(Error::Unsupported("animation timescale must be > 0"))); }
+        if frames.is_empty() {
+            return Err(at!(Error::Unsupported("empty frame sequence")));
+        }
+
+        let width = frames[0].pixels.width();
+        let height = frames[0].pixels.height();
+
+        for f in frames {
+            control.check().map_err(|e| at!(e))?;
+            if f.pixels.width() != width || f.pixels.height() != height {
+                return Err(at!(Error::Unsupported("all frames must have the same dimensions")));
+            }
+            if f.duration_ticks == 0 {
+                return Err(at!(Error::Unsupported("frame duration must be > 0")));
+            }
+            let max = (1u16 << depth) - 1;
+            for row in f.pixels.rows() {
+                control.check().map_err(|e| at!(e))?;
+                if row.iter().any(|p| p.r > max || p.g > max || p.b > max || p.a > max) {
+                    return Err(at!(Error::Unsupported("animation sample exceeds its declared code depth")));
+                }
+            }
+        }
+
+        let mut has_alpha = false;
+        'alpha_scan: for f in frames {
+            for row in f.pixels.rows() {
+                control.check().map_err(|e| at!(e))?;
+                if row.iter().any(|px| px.a != (1u16 << depth) - 1) {
+                    has_alpha = true;
+                    break 'alpha_scan;
+                }
+            }
+        }
+        let durations_ticks: Vec<u32> = frames.iter().map(|f| f.duration_ticks).collect();
+
+        // Encode color track
+        let color_frames = encode_sequence_av1_timed::<u16>(
+            self, &control, (width, height),
+            frames.len(),
+            |frame_idx, rav1e_frame| {
+                let f = &frames[frame_idx];
+                fill_frame_rgba16_color_420(self, rav1e_frame, f.pixels, self.premultiplied_alpha, depth, &control)?;
+                Ok(())
+            },
+            false,
+            (depth, encoder_time_base(timescale, &durations_ticks)),
         ).at()?;
 
         // Encode alpha track if needed
         let alpha_frames = if has_alpha {
-            Some(encode_sequence_av1::<u16>(
-                self, width, height,
+            Some(encode_sequence_av1_timed::<u16>(
+                self, &control, (width, height),
                 frames.len(),
                 |frame_idx, rav1e_frame| {
                     let f = &frames[frame_idx];
-                    fill_frame_alpha16(rav1e_frame, width, height, f.rgba)?;
+                    fill_frame_alpha16(rav1e_frame, width, height, f.pixels, &control)?;
                     Ok(())
                 },
                 true,
-                10,
+                (depth, encoder_time_base(timescale, &durations_ticks)),
             ).at()?)
         } else {
             None
         };
 
-        assemble_animation(self, width, height, &color_frames, &durations_ms, alpha_frames.as_deref(), 10).at()
+        control.check().map_err(|e| at!(e))?;
+        let result = assemble_animation(self, width, height, &color_frames, &durations_ticks, alpha_frames.as_deref(), (depth, timescale)).at()?;
+        control.check().map_err(|e| at!(e))?;
+        Ok(result)
     }
+}
+
+// Encoder cadence drives coding heuristics, not container presentation timing.
+// Preserve the historical millisecond API's nominal cadence. For other clocks,
+// use the shortest frame interval, bounded by zenrav1e's 65536 fps safety limit.
+// AV1 timing-info is disabled; exact presentation ticks remain in mdhd/stts.
+fn encoder_time_base(timescale: u32, durations: &[u32]) -> Rational {
+    if timescale == 1000 { return Rational::new(1, 1000); }
+    let numerator = u64::from(*durations.iter().min().expect("validated nonempty frames"));
+    let denominator = u64::from(timescale);
+    if denominator > numerator * 65536 { Rational::new(1, 65536) }
+    else { Rational::new(numerator, denominator) }
 }
 
 // ---- Encoding helpers ----
 
+// Only the stop tests call it.
+#[cfg(all(test, feature = "stop"))]
 fn encode_sequence_av1<P: Pixel + Default>(
+    enc: &crate::Encoder<'_>, control: &AnimationControl<'_>, dims: (usize, usize), num_frames: usize,
+    init_frame: impl Fn(usize, &mut Frame<P>) -> core::result::Result<(), Error>,
+    is_alpha: bool, bit_depth: u8,
+) -> Result<Vec<Vec<u8>>> {
+    encode_sequence_av1_timed(enc, control, dims, num_frames, init_frame, is_alpha, (bit_depth, Rational::new(1, 1000)))
+}
+
+fn encode_sequence_av1_timed<P: Pixel + Default>(
     enc: &crate::Encoder<'_>,
-    width: usize,
-    height: usize,
+    control: &AnimationControl<'_>,
+    (width, height): (usize, usize),
     num_frames: usize,
     // The fill closure runs the per-pixel loop, so it stays bare `Error`.
     init_frame: impl Fn(usize, &mut Frame<P>) -> core::result::Result<(), Error>,
     is_alpha: bool,
-    bit_depth: u8,
+    (bit_depth, time_base): (u8, Rational),
 ) -> Result<Vec<Vec<u8>>> {
     // Pre-flight: reject oversized frames before building the rav1e context.
     // This is the shared chokepoint for every animation encode entry point.
+    control.check().map_err(|e| at!(e))?;
     enc.check_pixel_limit(width, height).at()?;
 
+    let (color_sampling, matrix, range) = animation_color(enc, is_alpha).map_err(|e| at!(e))?;
     let (quantizer, chroma_sampling) = if is_alpha {
         (enc.alpha_quantizer, ChromaSampling::Cs400)
     } else {
-        (enc.quantizer, ChromaSampling::Cs420)
+        (enc.quantizer, color_sampling)
     };
 
-    let speed = SpeedTweaks::from_my_preset(enc.speed, quantizer, width.max(height));
+    let speed = enc.animation_speed(quantizer, width.max(height), is_alpha);
 
     let color_description = if is_alpha {
         None
@@ -286,19 +471,19 @@ fn encode_sequence_av1<P: Pixel + Default>(
                 .unwrap_or(TransferCharacteristics::SRGB),
             color_primaries: enc.color_primaries
                 .unwrap_or(ColorPrimaries::BT709),
-            matrix_coefficients: MatrixCoefficients::BT601,
+            matrix_coefficients: matrix,
         })
     };
 
-    let config = EncoderConfig {
+    let mut config = EncoderConfig {
         width,
         height,
-        time_base: Rational::new(1, 1000),
+        time_base,
         sample_aspect_ratio: Rational::new(1, 1),
         bit_depth: bit_depth as usize,
         chroma_sampling,
         chroma_sample_position: ChromaSamplePosition::Unknown,
-        pixel_range: PixelRange::Full,
+        pixel_range: range,
         color_description,
         mastering_display: if is_alpha { None } else { enc.mastering_display },
         content_light: if is_alpha { None } else { enc.content_light },
@@ -338,22 +523,29 @@ fn encode_sequence_av1<P: Pixel + Default>(
         ..Default::default()
     };
 
-    let cfg = Config::new().with_encoder_config(config);
+    enc.configure_animation_coding(&mut config, is_alpha);
+    let cfg = enc.configure_animation_threads(Config::new().with_encoder_config(config));
     // Consume zenrav1e's bare `InvalidConfig` and trace it here (pre-loop
     // boundary). `Error::from` preserves the rav1e reason string.
     // TODO(whereat): when this crate bumps to zenrav1e ^0.2.0 (which returns
     // `At<InvalidConfig>`), switch this to `.map_err_at(Error::from)?` to carry
     // zenrav1e's own trace instead of starting a fresh one here.
     let mut ctx: Context<P> = cfg.new_context().map_err(|e| at!(Error::from(e)))?;
+    #[cfg(feature = "stop")]
+    ctx.set_stop(std::sync::Arc::new(control.owned()));
 
     // Per-frame send loop: propagate without tracing per-iteration. Plain `?`
     // uses the location-free `From<Error>`/`From<EncoderStatus>` wrap, so no
     // `at!`/`.at()` runs inside the loop. `Error::from(EncoderStatus)` still
     // preserves the rav1e reason. The trace is attached at the public boundary.
     for i in 0..num_frames {
+        control.check().map_err(|e| at!(e))?;
         let mut frame = ctx.new_frame();
         init_frame(i, &mut frame)?;
-        ctx.send_frame(frame).map_err(Error::from)?;
+        if !is_alpha && range == PixelRange::Limited {
+            limit_color_range(&mut frame, width, height, chroma_sampling, bit_depth, control)?;
+        }
+        ctx.send_frame((std::sync::Arc::new(frame), enc.animation_frame_parameters(is_alpha))).map_err(Error::from)?;
     }
     ctx.flush();
 
@@ -362,6 +554,7 @@ fn encode_sequence_av1<P: Pixel + Default>(
     loop {
         // Hot loop: bare `EncoderStatus` control-flow arms stay untraced; only
         // the genuine-error exit traces via `at!`.
+        control.check().map_err(|e| at!(e))?;
         match ctx.receive_packet() {
             Ok(packet) => {
                 let idx = packet.input_frameno as usize;
@@ -372,6 +565,8 @@ fn encode_sequence_av1<P: Pixel + Default>(
             Err(EncoderStatus::Encoded) => continue,
             Err(EncoderStatus::NeedMoreData) => continue,
             Err(EncoderStatus::LimitReached) => break,
+            #[cfg(feature = "stop")]
+            Err(EncoderStatus::Cancelled) => return Err(at!(Error::Cancelled)),
             Err(err) => return Err(at!(Error::from(err))),
         }
     }
@@ -389,27 +584,29 @@ fn make_sequence_header<P: Pixel + Default>(
     height: usize,
     is_alpha: bool,
     bit_depth: u8,
+    time_base: Rational,
 ) -> Result<Vec<u8>> {
     // Pre-flight: guard the standalone context built here too.
     enc.check_pixel_limit(width, height).at()?;
 
+    let (color_sampling, matrix, range) = animation_color(enc, is_alpha).map_err(|e| at!(e))?;
     let (quantizer, chroma_sampling) = if is_alpha {
         (enc.alpha_quantizer, ChromaSampling::Cs400)
     } else {
-        (enc.quantizer, ChromaSampling::Cs420)
+        (enc.quantizer, color_sampling)
     };
 
-    let speed = SpeedTweaks::from_my_preset(enc.speed, quantizer, width.max(height));
+    let speed = enc.animation_speed(quantizer, width.max(height), is_alpha);
 
-    let config = EncoderConfig {
+    let mut config = EncoderConfig {
         width,
         height,
-        time_base: Rational::new(1, 1000),
+        time_base,
         sample_aspect_ratio: Rational::new(1, 1),
         bit_depth: bit_depth as usize,
         chroma_sampling,
         chroma_sample_position: ChromaSamplePosition::Unknown,
-        pixel_range: PixelRange::Full,
+        pixel_range: range,
         color_description: if is_alpha {
             None
         } else {
@@ -418,7 +615,7 @@ fn make_sequence_header<P: Pixel + Default>(
                     .unwrap_or(TransferCharacteristics::SRGB),
                 color_primaries: enc.color_primaries
                     .unwrap_or(ColorPrimaries::BT709),
-                matrix_coefficients: MatrixCoefficients::BT601,
+                matrix_coefficients: matrix,
             })
         },
         mastering_display: None,
@@ -453,6 +650,7 @@ fn make_sequence_header<P: Pixel + Default>(
         // measured them, and a guessed value would silently change RD.
         ..Default::default()
     };
+    enc.configure_animation_coding(&mut config, is_alpha);
     let cfg = Config::new().with_encoder_config(config);
     // TODO(whereat): when this crate bumps to zenrav1e ^0.2.0 (which returns
     // `At<InvalidConfig>`), switch this to `.map_err_at(Error::from)?` to carry
@@ -467,27 +665,30 @@ fn assemble_animation(
     width: usize,
     height: usize,
     color_frames: &[Vec<u8>],
-    durations_ms: &[u32],
+    durations_ticks: &[u32],
     alpha_frames: Option<&[Vec<u8>]>,
-    bit_depth: u8,
+    (bit_depth, timescale): (u8, u32),
 ) -> Result<EncodedAnimation> {
-    let total_duration_ms: u64 = durations_ms.iter().map(|d| u64::from(*d)).sum();
+    let total_duration_ticks = durations_ticks.iter().try_fold(0u64, |sum, &d| sum.checked_add(u64::from(d)))
+        .ok_or(Error::Unsupported("animation duration overflow")).map_err(|e| at!(e))?;
+    let total_duration_ms = u64::try_from(u128::from(total_duration_ticks) * 1000 / u128::from(timescale))
+        .map_err(|_| at!(Error::Unsupported("animation millisecond duration overflow")))?;
     let frame_count = color_frames.len();
 
     let (color_seq_header, alpha_seq_header) = match bit_depth {
         10 | 12 => {
-            let color = make_sequence_header::<u16>(enc, width, height, false, bit_depth).at()?;
+            let color = make_sequence_header::<u16>(enc, width, height, false, bit_depth, encoder_time_base(timescale, durations_ticks)).at()?;
             let alpha = if alpha_frames.is_some() {
-                Some(make_sequence_header::<u16>(enc, width, height, true, bit_depth).at()?)
+                Some(make_sequence_header::<u16>(enc, width, height, true, bit_depth, encoder_time_base(timescale, durations_ticks)).at()?)
             } else {
                 None
             };
             (color, alpha)
         }
         _ => {
-            let color = make_sequence_header::<u8>(enc, width, height, false, bit_depth).at()?;
+            let color = make_sequence_header::<u8>(enc, width, height, false, bit_depth, encoder_time_base(timescale, durations_ticks)).at()?;
             let alpha = if alpha_frames.is_some() {
-                Some(make_sequence_header::<u8>(enc, width, height, true, bit_depth).at()?)
+                Some(make_sequence_header::<u8>(enc, width, height, true, bit_depth, encoder_time_base(timescale, durations_ticks)).at()?)
             } else {
                 None
             };
@@ -496,7 +697,7 @@ fn assemble_animation(
     };
 
     let frames: Vec<SerializeFrame<'_>> = color_frames.iter()
-        .zip(durations_ms.iter())
+        .zip(durations_ticks.iter())
         .enumerate()
         .map(|(i, (color_data, &dur))| {
             let alpha = alpha_frames.and_then(|af| af.get(i).map(|a| a.as_slice()));
@@ -505,27 +706,98 @@ fn assemble_animation(
         }).collect();
 
     let mut anim = AnimatedImage::new();
-    anim.set_color_config(make_av1c_config(false, bit_depth));
+    anim.set_timescale(timescale);
+    anim.set_color_config(make_av1c_config(false, bit_depth, enc.chroma_subsampling));
     if alpha_frames.is_some() {
-        anim.set_alpha_config(make_av1c_config(true, bit_depth));
+        anim.set_alpha_config(make_av1c_config(true, bit_depth, enc.chroma_subsampling));
     }
-    let avif_file = anim.serialize(width as u32, height as u32, &frames, &color_seq_header, alpha_seq_header.as_deref());
+    enc.configure_animation_metadata(&mut anim, alpha_frames.is_some());
+    let avif_file = anim.try_serialize(width as u32, height as u32, &frames, &color_seq_header, alpha_seq_header.as_deref())
+        .map_err(|e| e.map_error(|e| Error::SerializationError(e.to_string())))?;
 
     Ok(EncodedAnimation {
         avif_file,
         frame_count,
         total_duration_ms,
+        total_duration_ticks,
+        timescale,
     })
+}
+
+fn animation_color(enc: &crate::Encoder<'_>, alpha: bool) -> core::result::Result<(ChromaSampling, MatrixCoefficients, PixelRange), Error> {
+    if alpha { return Ok((ChromaSampling::Cs400, MatrixCoefficients::BT601, PixelRange::Full)); }
+    let sampling = if enc.chroma_subsampling == crate::ChromaSubsampling::Yuv420 { ChromaSampling::Cs420 } else { ChromaSampling::Cs444 };
+    let range = enc.pixel_range.unwrap_or(PixelRange::Full);
+    let matrix = if enc.color_model == crate::ColorModel::RGB { MatrixCoefficients::Identity } else { MatrixCoefficients::BT601 };
+    if matrix == MatrixCoefficients::Identity && (sampling != ChromaSampling::Cs444 || range != PixelRange::Full) {
+        return Err(Error::Unsupported("RGB identity animation requires full-range 4:4:4"));
+    }
+    Ok((sampling, matrix, range))
+}
+
+fn fill_color_444<P: Pixel>(frame: &mut Frame<P>, (width, height): (usize, usize), depth: u8,
+    model: crate::ColorModel, control: &AnimationControl<'_>, pixel: impl Fn(usize, usize) -> [u16; 3],
+) -> core::result::Result<(), Error> {
+    let max = f64::from((1u16 << depth) - 1);
+    let center = f64::from(1u16 << (depth - 1));
+    for (plane_index, plane) in frame.planes.iter_mut().enumerate() {
+        let mut slice = plane.mut_slice(Default::default());
+        for (y, row) in slice.rows_iter_mut().take(height).enumerate() {
+            control.check()?;
+            for (x, out) in row[..width].iter_mut().enumerate() {
+                let [r, g, b] = pixel(x, y).map(f64::from);
+                let value = if model == crate::ColorModel::RGB {
+                    [g, b, r][plane_index]
+                } else {
+                    let luma = f64::from(BT601[0]) * r + f64::from(BT601[1]) * g + f64::from(BT601[2]) * b;
+                    match plane_index {
+                        0 => luma,
+                        1 => (b - luma) * 0.5 / (1.0 - f64::from(BT601[2])) + center,
+                        _ => (r - luma) * 0.5 / (1.0 - f64::from(BT601[0])) + center,
+                    }
+                };
+                *out = P::cast_from(value.round().clamp(0.0, max) as u16);
+            }
+        }
+    }
+    Ok(())
+}
+
+fn limit_color_range<P: Pixel>(frame: &mut Frame<P>, width: usize, height: usize, sampling: ChromaSampling,
+    depth: u8, control: &AnimationControl<'_>,
+) -> core::result::Result<(), Error> {
+    let scale = 1u32 << (depth - 8);
+    let max = (1u32 << depth) - 1;
+    for (p, plane) in frame.planes.iter_mut().enumerate() {
+        let (w, h) = if p != 0 && sampling == ChromaSampling::Cs420 { (width.div_ceil(2), height.div_ceil(2)) } else { (width, height) };
+        let mut slice = plane.mut_slice(Default::default());
+        for row in slice.rows_iter_mut().take(h) {
+            control.check()?;
+            for value in &mut row[..w] {
+                let v = u32::cast_from(*value);
+                let range = if p == 0 { 219 } else { 224 } * scale;
+                *value = P::cast_from(16 * scale + (v * range + max / 2) / max);
+            }
+        }
+    }
+    Ok(())
 }
 
 // ---- Frame fill helpers (8-bit) ----
 
 fn fill_frame_rgb8_420(
+    enc: &crate::Encoder<'_>,
     frame: &mut Frame<u8>,
-    width: usize,
-    height: usize,
     img: ImgRef<'_, RGB8>,
+    control: &AnimationControl<'_>,
 ) -> core::result::Result<(), Error> {
+    let (width, height) = (img.width(), img.height());
+    if enc.chroma_subsampling == crate::ChromaSubsampling::Yuv444 {
+        return fill_color_444(frame, (width, height), 8, enc.color_model, control, |x, y| {
+            let px = img[(x, y)];
+            [u16::from(px.r), u16::from(px.g), u16::from(px.b)]
+        });
+    }
     let chroma_width = width.div_ceil(2);
     let chroma_height = height.div_ceil(2);
 
@@ -543,6 +815,7 @@ fn fill_frame_rgb8_420(
     let mut count: Vec<u8> = vec![0; chroma_width];
 
     for row_idx in 0..height {
+        control.check()?;
         let y_row = &mut y_rows.next().unwrap()[..width];
 
         for (col_idx, y_out) in y_row.iter_mut().enumerate() {
@@ -582,11 +855,20 @@ fn fill_frame_rgb8_420(
 }
 
 fn fill_frame_rgba8_color_420(
+    enc: &crate::Encoder<'_>,
     frame: &mut Frame<u8>,
-    width: usize,
-    height: usize,
     img: ImgRef<'_, RGBA8>,
+    premultiplied: bool,
+    control: &AnimationControl<'_>,
 ) -> core::result::Result<(), Error> {
+    let (width, height) = (img.width(), img.height());
+    if enc.chroma_subsampling == crate::ChromaSubsampling::Yuv444 {
+        return fill_color_444(frame, (width, height), 8, enc.color_model, control, |x, y| {
+            let px = img[(x, y)];
+            let scale = |v| if premultiplied { ((u32::from(v) * u32::from(px.a) + 127) / 255) as u16 } else { u16::from(v) };
+            [scale(px.r), scale(px.g), scale(px.b)]
+        });
+    }
     let chroma_width = width.div_ceil(2);
     let chroma_height = height.div_ceil(2);
 
@@ -604,10 +886,15 @@ fn fill_frame_rgba8_color_420(
     let mut count: Vec<u8> = vec![0; chroma_width];
 
     for row_idx in 0..height {
+        control.check()?;
         let y_row = &mut y_rows.next().unwrap()[..width];
 
         for (col_idx, y_out) in y_row.iter_mut().enumerate() {
             let px = img[(col_idx, row_idx)];
+            let px = if premultiplied {
+                let multiply = |v| ((u32::from(v) * u32::from(px.a) + 127) / 255) as u8;
+                RGBA8::new(multiply(px.r), multiply(px.g), multiply(px.b), px.a)
+            } else { px };
             let yv = BT601[0] * f32::from(px.r) + BT601[1] * f32::from(px.g) + BT601[2] * f32::from(px.b);
             *y_out = yv.round().clamp(0.0, 255.0) as u8;
 
@@ -647,9 +934,11 @@ fn fill_frame_alpha8(
     width: usize,
     height: usize,
     img: ImgRef<'_, RGBA8>,
+    control: &AnimationControl<'_>,
 ) -> core::result::Result<(), Error> {
     let mut y_plane = frame.planes[0].mut_slice(Default::default());
     for (row_idx, y_row) in y_plane.rows_iter_mut().take(height).enumerate() {
+        control.check()?;
         let y_row = &mut y_row[..width];
         for (col_idx, y_out) in y_row.iter_mut().enumerate() {
             *y_out = img[(col_idx, row_idx)].a;
@@ -658,15 +947,26 @@ fn fill_frame_alpha8(
     Ok(())
 }
 
-// ---- Frame fill helpers (16-bit / 10-bit) ----
+// ---- Frame fill helpers (U16 / 10/12-bit) ----
 
-/// Convert 10-bit RGB to 10-bit YCbCr 4:2:0 using BT.601 matrix.
+/// Convert 10/12-bit RGB to matching-depth YCbCr 4:2:0 using BT.601 matrix.
 fn fill_frame_rgb16_420(
+    enc: &crate::Encoder<'_>,
     frame: &mut Frame<u16>,
-    width: usize,
-    height: usize,
     img: ImgRef<'_, rgb::RGB<u16>>,
+    depth: u8,
+    control: &AnimationControl<'_>,
 ) -> core::result::Result<(), Error> {
+    let (width, height) = (img.width(), img.height());
+    let max_code = (1u32 << depth) - 1;
+    let maximum = f64::from(max_code);
+    let center = f64::from(1u32 << (depth - 1));
+    if enc.chroma_subsampling == crate::ChromaSubsampling::Yuv444 {
+        return fill_color_444(frame, (width, height), depth, enc.color_model, control, |x, y| {
+            let px = img[(x, y)];
+            [px.r, px.g, px.b]
+        });
+    }
     let chroma_width = width.div_ceil(2);
     let chroma_height = height.div_ceil(2);
 
@@ -684,6 +984,7 @@ fn fill_frame_rgb16_420(
     let mut count: Vec<u8> = vec![0; chroma_width];
 
     for row_idx in 0..height {
+        control.check()?;
         let y_row = &mut y_rows.next().unwrap()[..width];
 
         for (col_idx, y_out) in y_row.iter_mut().enumerate() {
@@ -692,14 +993,14 @@ fn fill_frame_rgb16_420(
             let g = f64::from(px.g);
             let b = f64::from(px.b);
             let yv = BT601[0] as f64 * r + BT601[1] as f64 * g + BT601[2] as f64 * b;
-            *y_out = yv.round().clamp(0.0, 1023.0) as u16;
+            *y_out = yv.round().clamp(0.0, maximum) as u16;
 
             let cx = col_idx / 2;
-            let cb = (b - yv) * 0.5 / (1.0 - BT601[2] as f64) + 512.0;
-            let cr = (r - yv) * 0.5 / (1.0 - BT601[0] as f64) + 512.0;
+            let cb = (b - yv) * 0.5 / (1.0 - BT601[2] as f64) + center;
+            let cr = (r - yv) * 0.5 / (1.0 - BT601[0] as f64) + center;
 
-            u_acc[cx] += cb.round().clamp(0.0, 1023.0) as u64;
-            v_acc[cx] += cr.round().clamp(0.0, 1023.0) as u64;
+            u_acc[cx] += cb.round().clamp(0.0, maximum) as u64;
+            v_acc[cx] += cr.round().clamp(0.0, maximum) as u64;
             if row_idx % 2 == 0 && col_idx % 2 == 0 {
                 count[cx] = 1;
             } else {
@@ -725,13 +1026,26 @@ fn fill_frame_rgb16_420(
     Ok(())
 }
 
-/// Convert 10-bit RGBA color channels to 10-bit YCbCr 4:2:0 (alpha ignored).
+/// Convert 10/12-bit RGBA color channels to matching-depth YCbCr 4:2:0 (alpha ignored).
 fn fill_frame_rgba16_color_420(
+    enc: &crate::Encoder<'_>,
     frame: &mut Frame<u16>,
-    width: usize,
-    height: usize,
     img: ImgRef<'_, rgb::RGBA<u16>>,
+    premultiplied: bool,
+    depth: u8,
+    control: &AnimationControl<'_>,
 ) -> core::result::Result<(), Error> {
+    let (width, height) = (img.width(), img.height());
+    let max_code = (1u32 << depth) - 1;
+    let maximum = f64::from(max_code);
+    let center = f64::from(1u32 << (depth - 1));
+    if enc.chroma_subsampling == crate::ChromaSubsampling::Yuv444 {
+        return fill_color_444(frame, (width, height), depth, enc.color_model, control, |x, y| {
+            let px = img[(x, y)];
+            let scale = |v| if premultiplied { ((u32::from(v) * u32::from(px.a) + max_code / 2) / max_code) as u16 } else { v };
+            [scale(px.r), scale(px.g), scale(px.b)]
+        });
+    }
     let chroma_width = width.div_ceil(2);
     let chroma_height = height.div_ceil(2);
 
@@ -749,22 +1063,27 @@ fn fill_frame_rgba16_color_420(
     let mut count: Vec<u8> = vec![0; chroma_width];
 
     for row_idx in 0..height {
+        control.check()?;
         let y_row = &mut y_rows.next().unwrap()[..width];
 
         for (col_idx, y_out) in y_row.iter_mut().enumerate() {
             let px = img[(col_idx, row_idx)];
+            let px = if premultiplied {
+                let multiply = |v| ((u32::from(v) * u32::from(px.a) + max_code / 2) / max_code) as u16;
+                rgb::RGBA::<u16>::new(multiply(px.r), multiply(px.g), multiply(px.b), px.a)
+            } else { px };
             let r = f64::from(px.r);
             let g = f64::from(px.g);
             let b = f64::from(px.b);
             let yv = BT601[0] as f64 * r + BT601[1] as f64 * g + BT601[2] as f64 * b;
-            *y_out = yv.round().clamp(0.0, 1023.0) as u16;
+            *y_out = yv.round().clamp(0.0, maximum) as u16;
 
             let cx = col_idx / 2;
-            let cb = (b - yv) * 0.5 / (1.0 - BT601[2] as f64) + 512.0;
-            let cr = (r - yv) * 0.5 / (1.0 - BT601[0] as f64) + 512.0;
+            let cb = (b - yv) * 0.5 / (1.0 - BT601[2] as f64) + center;
+            let cr = (r - yv) * 0.5 / (1.0 - BT601[0] as f64) + center;
 
-            u_acc[cx] += cb.round().clamp(0.0, 1023.0) as u64;
-            v_acc[cx] += cr.round().clamp(0.0, 1023.0) as u64;
+            u_acc[cx] += cb.round().clamp(0.0, maximum) as u64;
+            v_acc[cx] += cr.round().clamp(0.0, maximum) as u64;
             if row_idx % 2 == 0 && col_idx % 2 == 0 {
                 count[cx] = 1;
             } else {
@@ -796,9 +1115,11 @@ fn fill_frame_alpha16(
     width: usize,
     height: usize,
     img: ImgRef<'_, rgb::RGBA<u16>>,
+    control: &AnimationControl<'_>,
 ) -> core::result::Result<(), Error> {
     let mut y_plane = frame.planes[0].mut_slice(Default::default());
     for (row_idx, y_row) in y_plane.rows_iter_mut().take(height).enumerate() {
+        control.check()?;
         let y_row = &mut y_row[..width];
         for (col_idx, y_out) in y_row.iter_mut().enumerate() {
             *y_out = img[(col_idx, row_idx)].a;
@@ -808,9 +1129,13 @@ fn fill_frame_alpha16(
 }
 
 /// Construct an Av1CBox configuration for the given bit depth.
-fn make_av1c_config(is_alpha: bool, bit_depth: u8) -> Av1CBox {
+fn make_av1c_config(is_alpha: bool, bit_depth: u8, subsampling: crate::ChromaSubsampling) -> Av1CBox {
     let mut config = Av1CBox::default();
     config.monochrome = is_alpha;
+    let subsampled = is_alpha || subsampling == crate::ChromaSubsampling::Yuv420;
+    config.chroma_subsampling_x = subsampled;
+    config.chroma_subsampling_y = subsampled;
+    config.seq_profile = if bit_depth == 12 { 2 } else if subsampled { 0 } else { 1 };
     if bit_depth > 8 {
         config.high_bitdepth = true;
         if bit_depth > 10 {
@@ -818,4 +1143,216 @@ fn make_av1c_config(is_alpha: bool, bit_depth: u8) -> Av1CBox {
         }
     }
     config
+}
+
+#[cfg(all(test, feature = "stop"))]
+mod cancellation_tests {
+    use super::*;
+    use std::sync::{Arc, atomic::{AtomicUsize, Ordering}};
+
+    struct StopAfterChecks(Arc<AtomicUsize>);
+    impl almost_enough::Stop for StopAfterChecks {
+        fn check(&self) -> core::result::Result<(), almost_enough::StopReason> {
+            if self.0.fetch_add(1, Ordering::Relaxed) >= 11 {
+                Err(almost_enough::StopReason::Cancelled)
+            } else {
+                Ok(())
+            }
+        }
+    }
+
+    fn check_backend<P: Pixel + Default>(bit_depth: u8, is_alpha: bool) {
+        let calls = Arc::new(AtomicUsize::new(0));
+        let enc = crate::Encoder::new().with_chroma_subsampling(crate::ChromaSubsampling::Yuv420).with_speed(10)
+            .with_stop(almost_enough::StopToken::new(StopAfterChecks(calls.clone())));
+        let control = enc.animation_control();
+        // The wrapper polls fewer than twelve times for this single-frame
+        // sequence. Sixteen superblocks make the stop fire inside rav1e.
+        // No sleep, scheduler deadline, or conversion-loop polling is involved.
+        let result = encode_sequence_av1::<P>(&enc, &control, (256, 256), 1,
+            |_, _| Ok(()), is_alpha, bit_depth);
+        assert!(matches!(result.as_ref().map_err(|e| e.error()), Err(Error::Cancelled)),
+            "backend cancellation must retain Error::Cancelled");
+        assert!(calls.load(Ordering::Relaxed) >= 12);
+    }
+
+    #[test]
+    fn animation_cancellation_reaches_backend_superblocks() {
+        check_backend::<u8>(8, false);
+        check_backend::<u8>(8, true);
+        check_backend::<u16>(10, false);
+        check_backend::<u16>(10, true);
+    }
+}
+
+#[cfg(all(test, feature = "__expert"))]
+mod filter_tests {
+    use super::*;
+
+    fn filter_packets<P: Pixel + Default>(depth: u8, alpha: bool, cdef: bool, lrf: bool) -> Vec<u8> {
+        let params = crate::expert::InternalParams { lrf: Some(lrf), ..Default::default() };
+        let enc = crate::Encoder::new().with_chroma_subsampling(crate::ChromaSubsampling::Yuv420).with_speed(10).with_quality(35.0)
+            .with_num_threads(Some(1)).with_cdef(Some(cdef)).with_internal_params(params);
+        let control = enc.animation_control();
+        let packets = encode_sequence_av1::<P>(&enc, &control, (65, 67), 2, |index, frame| {
+            for (plane_index, plane) in frame.planes.iter_mut().enumerate() {
+                let width = if plane_index == 0 { 65 } else { 33 };
+                let height = if plane_index == 0 { 67 } else { 34 };
+                if alpha && plane_index != 0 { continue; }
+                let mut slice = plane.mut_slice(Default::default());
+                for (y, row) in slice.rows_iter_mut().take(height).enumerate() {
+                    for (x, out) in row[..width].iter_mut().enumerate() {
+                        let value = ((x * 17 + y * 31 + (x * y % 29) * 7 + index * 13) % 256) << (depth - 8);
+                        *out = P::cast_from(value);
+                    }
+                }
+            }
+            Ok(())
+        }, alpha, depth).unwrap();
+        assert_eq!(packets.len(), 2);
+        packets.concat()
+    }
+
+    fn check_filters<P: Pixel + Default>(depth: u8) {
+        let off = filter_packets::<P>(depth, false, false, false);
+        let cdef = filter_packets::<P>(depth, false, true, false);
+        let lrf = filter_packets::<P>(depth, false, false, true);
+        let both = filter_packets::<P>(depth, false, true, true);
+        assert!(off != cdef, "CDEF override must reach encoded packets at depth {depth}");
+        assert!(off != lrf, "restoration override must reach encoded packets at depth {depth}");
+        let alpha_off = filter_packets::<P>(depth, true, false, false);
+        let alpha_on = filter_packets::<P>(depth, true, true, true);
+        assert_eq!(alpha_off, alpha_on, "color filter overrides must preserve the alpha policy");
+        if let Some(dir) = std::env::var_os("ZENRAVIF_FILTER_ARTIFACTS") {
+            let dir = std::path::PathBuf::from(dir);
+            std::fs::create_dir_all(&dir).unwrap();
+            for (name, data) in [("off", off), ("cdef", cdef), ("lrf", lrf), ("both", both), ("alpha", alpha_off)] {
+                std::fs::write(dir.join(format!("filters-{depth}-{name}.obu")), data).unwrap();
+            }
+        }
+    }
+
+    #[test]
+    fn animation_filter_overrides_reach_packets() {
+        check_filters::<u8>(8);
+        check_filters::<u16>(10);
+    }
+}
+
+#[cfg(all(test, feature = "imazen"))]
+mod coding_tests {
+    use super::*;
+
+    fn sample(index: usize, plane: usize, x: usize, y: usize, depth: u8) -> usize {
+        (x * 17 + y * 31 + (x * y % 29) * 7 + index * 13 + plane * 47) % (1 << depth)
+    }
+
+    fn packets<P: Pixel + Default>(enc: &crate::Encoder<'_>, depth: u8, alpha: bool) -> Vec<u8> {
+        encode_sequence_av1::<P>(enc, &enc.animation_control(), (65, 67), 2, |index, frame| {
+            for (p, plane) in frame.planes.iter_mut().enumerate() {
+                if alpha && p != 0 { continue; }
+                let (width, height) = if p == 0 { (65, 67) } else { (33, 34) };
+                let mut slice = plane.mut_slice(Default::default());
+                for (y, row) in slice.rows_iter_mut().take(height).enumerate() {
+                    for (x, out) in row[..width].iter_mut().enumerate() {
+                        *out = P::cast_from(sample(index, p, x, y, depth));
+                    }
+                }
+            }
+            Ok(())
+        }, alpha, depth).unwrap().concat()
+    }
+
+    fn check<P: Pixel + Default>(depth: u8) {
+        let base = crate::Encoder::new().with_chroma_subsampling(crate::ChromaSubsampling::Yuv420).with_speed(10).with_quality(35.0)
+            .with_alpha_quality(35.0).with_num_threads(Some(1));
+        let advanced = base.clone().with_vaq(true, 2.0).with_seg_boost(1.5)
+            .with_still_image_tuning(true).with_trellis(true);
+        for alpha in [false, true] {
+            let original = packets::<P>(&base, depth, alpha);
+            let lossless = packets::<P>(&base.clone().with_lossless(true), depth, alpha);
+            let tuned = packets::<P>(&advanced, depth, alpha);
+            let lossless_tuned = packets::<P>(&advanced.clone().with_lossless(true), depth, alpha);
+            assert!(original != lossless, "lossless request ignored: depth={depth} alpha={alpha}");
+            if alpha { assert_eq!(original, tuned, "color quantization controls must preserve alpha"); }
+            else { assert!(original != tuned, "color tuning ignored at depth={depth}"); }
+            if let Some(dir) = std::env::var_os("ZENRAVIF_CODING_ARTIFACTS") {
+                let dir = std::path::PathBuf::from(dir);
+                std::fs::create_dir_all(&dir).unwrap();
+                let stem = format!("coding-{depth}-{}", if alpha { "alpha" } else { "color" });
+                for (name, data) in [("base", original), ("lossless", lossless), ("tuned", tuned), ("lossless-tuned", lossless_tuned)] {
+                    std::fs::write(dir.join(format!("{stem}-{name}.obu")), data).unwrap();
+                }
+                let mut expected = Vec::new();
+                for index in 0..2 {
+                    for p in 0..if alpha { 1 } else { 3 } {
+                        let (width, height) = if p == 0 { (65, 67) } else { (33, 34) };
+                        for y in 0..height { for x in 0..width {
+                            let value = sample(index, p, x, y, depth) as u16;
+                            if depth == 8 { expected.push(value as u8); }
+                            else { expected.extend_from_slice(&value.to_le_bytes()); }
+                        } }
+                    }
+                }
+                std::fs::write(dir.join(format!("{stem}.source.yuv")), expected).unwrap();
+            }
+        }
+    }
+
+    #[test]
+    fn animation_coding_options_reach_color_and_lossless_alpha() {
+        check::<u8>(8);
+        check::<u16>(10);
+    }
+}
+
+#[cfg(all(test, feature = "__expert"))]
+mod hint_tests {
+    use super::*;
+
+    fn packets<P: Pixel + Default>(depth: u8, alpha: bool, map: Option<Box<[f32]>>) -> Vec<Vec<u8>> {
+        let params = crate::expert::InternalParams { sb_q_scale: map, ..Default::default() };
+        let enc = crate::Encoder::new().with_chroma_subsampling(crate::ChromaSubsampling::Yuv420).with_speed(8).with_quality(60.0)
+            .with_num_threads(Some(1)).with_internal_params(params);
+        encode_sequence_av1::<P>(&enc, &enc.animation_control(), (129, 67), 2, |index, frame| {
+            for (p, plane) in frame.planes.iter_mut().enumerate() {
+                if alpha && p != 0 { continue; }
+                let (width, height) = if p == 0 { (129, 67) } else { (65, 34) };
+                let mut slice = plane.mut_slice(Default::default());
+                for (y, row) in slice.rows_iter_mut().take(height).enumerate() {
+                    for (x, out) in row[..width].iter_mut().enumerate() {
+                        *out = P::cast_from((x * 17 + y * 31 + x * y * 7 + index * 13 + p * 47) % (1 << depth));
+                    }
+                }
+            }
+            Ok(())
+        }, alpha, depth).unwrap()
+    }
+
+    fn check<P: Pixel + Default>(depth: u8) {
+        for alpha in [false, true] {
+            let base = packets::<P>(depth, alpha, None);
+            let neutral = packets::<P>(depth, alpha, Some(vec![1.0; 6].into_boxed_slice()));
+            let skewed = packets::<P>(depth, alpha, Some(vec![0.5, 2.0, 0.5, 2.0, 0.5, 2.0].into_boxed_slice()));
+            if let Some(dir) = std::env::var_os("ZENRAVIF_HINT_ARTIFACTS") {
+                let dir = std::path::PathBuf::from(dir);
+                std::fs::create_dir_all(&dir).unwrap();
+                for (name, packets) in [("base", &base), ("neutral", &neutral), ("skewed", &skewed)] {
+                    std::fs::write(dir.join(format!("hints-{depth}-{}-{name}.obu", if alpha { "alpha" } else { "color" })), packets.concat()).unwrap();
+                }
+            }
+            assert_eq!(base, neutral, "neutral hints must preserve bytes");
+            assert_eq!(base.len(), 2);
+            for i in 0..2 {
+                if alpha { assert_eq!(base[i], skewed[i], "color hints must not affect alpha"); }
+                else { assert!(base[i] != skewed[i], "hint ignored: depth={depth} frame={i}"); }
+            }
+        }
+    }
+
+    #[test]
+    fn animation_hints_reach_each_color_frame_and_preserve_alpha() {
+        check::<u8>(8);
+        check::<u16>(10);
+    }
 }

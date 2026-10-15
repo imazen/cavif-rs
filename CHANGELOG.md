@@ -6,6 +6,59 @@ encoder by Kornel Lesiński, extended for the zenrav1e fork's still-image work.
 
 ## [Unreleased]
 
+### Animation color formats (2026-09-07)
+
+- Honor configured 4:2:0/4:4:4, RGB identity and full/limited range throughout animation pixels, codec contexts and container signaling. Pin zenrav1e `1447c200` for forced-4x4 inter partitions and exact partial chroma edges. See `benchmarks/animation_color_2026-09-07.md`.
+
+### Exact animation timing (2026-09-07)
+
+- Add `TimedAnimFrame` and four timed RGB/RGBA animation entry points with exact timescale ticks, alpha timing, checked totals and exact result fields; preserve the millisecond APIs. See `benchmarks/animation_timing_2026-09-07.md`.
+
+### Animation quantizer hints (2026-09-07)
+
+- Forward the configured superblock quantizer map on every animation color submission, preserving neutral-map and alpha bytes; backend application remains intra-only. See `benchmarks/animation_hints_2026-09-07.md`.
+
+### Animation coding controls (2026-09-07)
+
+- Forward animation VAQ, segmentation boost, trellis and tune for color; apply lossless quantization to both tracks. Pin zenrav1e `1d5a6e04` to prevent trellis from changing lossless samples, with exact decoded-plane verification.
+
+
+### Animation speed overrides (2026-09-07)
+
+- Apply the eight remaining explicit speed overrides to animation color encoding, including partition limits and prediction modes; retain alpha presets. See `benchmarks/animation_speed_2026-09-07.md`.
+
+
+### Animation filter forwarding (2026-09-07)
+
+- Apply explicit color CDEF and loop-restoration overrides in animation encoding, preserving the independent alpha policy. Packet regressions and ten independently decoded streams cover both coding depths; see `benchmarks/animation_filters_2026-09-07.md`.
+
+
+### Animation thread forwarding (2026-09-07)
+
+- Apply the requested thread-pool size to animation color and alpha encoding, matching still-image settings. Verified live worker counts and byte-identical two-frame output across thread settings; see `benchmarks/animation_threads_2026-09-07.md`.
+
+### Animation cancellation correction (2026-09-07, 294cd9ee)
+
+- Honor cancellation tokens and one shared timeout across animation preparation, color/alpha tracks and serialization. With the `stop` feature, forward the combined control to zenrav1e's per-superblock checks and preserve `Error::Cancelled`.
+- Enabled regressions cover all four input formats; removing backend forwarding makes the per-superblock test fail. See `benchmarks/animation_cancellation_2026-09-07.md`.
+
+### Fast-preset mode search correction (2026-09-07)
+
+- Restore the preset's full intra-mode search at speeds 9/10 while retaining CDEF and transform-domain choices. The former one-candidate cap made the shipped tune's photo/q35 result larger and lower-quality than the original budget.
+- A 35-image photo/screen audit improves every matched-quality rate curve: median 3.33% fewer bytes at speed 10 and 5.20% at speed 9. Median single-pass encode time rises 23% and 49%, respectively; this is a documented quality/cost correction, not a speedup. See `benchmarks/quality_drift_2026-09-07.md`.
+
+### Still premultiplication correction (2026-09-07)
+
+- Associate RGB by multiplying by alpha before still encoding. Opaque pixels retain their color and alpha; fully transparent pixels clear only color. Previously the premultiplied path divided partial-alpha RGB and made opaque pixels transparent.
+- Decoded-pixel regression evidence is recorded in `benchmarks/still_premultiplication_2026-09-07.md`.
+
+### Animation metadata correction (2026-09-07)
+
+- Preserve configured ICC, Exif, XMP, rotation, mirror, CICP, CLLI and MDCV on animation color tracks and posters, using the canonical serializer at `98c8a501`.
+- Premultiply animation color samples before conversion when requested, at both 8 and 10 bits, and signal the matching alpha association. Input remains unassociated RGBA.
+- Use checked animation serialization and retain its failure reason in `SerializationError`; invalid metadata is not silently masked by unchecked output.
+
+
 ### Known issues
 - **CI has never once run automatically in this repository — every run in its
   history was started by hand.** All 16 workflow runs `imazen/cavif-rs` has ever

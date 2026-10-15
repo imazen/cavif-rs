@@ -44,6 +44,7 @@ opt-level = 2
 
 [dev-dependencies]
 avif-parse = "2.0.0"
+zenavif-parse = "0.5.2"
 # `examples/gate_sweep.rs` (the release-gate A/B harness) and
 # `examples/hdr_pq10_probe.rs` (the 10-bit PQ round-trip probe): both decode the
 # encoder's own output and score it, so a gate flip's effect on bytes AND
@@ -127,7 +128,7 @@ avif-parse = "2.0.0"
 # both architectures at the END of the range. That makes an x86_64 shift
 # unlikely, but it is an inference from upstream's records, not a measurement
 # taken here. Treat the ssim2 movement described here as an aarch64 result.
-rav1d-safe = { git = "https://github.com/imazen/rav1d-safe", rev = "66f58fa6a64c689998721cc5cdb16a4698e26eec", default-features = false, features = ["bitdepth_8", "bitdepth_16"] }
+rav1d-safe = { git = "https://github.com/imazen/rav1d-safe", rev = "dfd01e3268f6e8da862d2d5f0a71d19f414f2b87", default-features = false, features = ["bitdepth_8", "bitdepth_16"] }
 fast-ssim2 = { version = "0.8.2", features = ["imgref"] }
 zenresize = { version = "0.3.1", default-features = false, features = ["std"] }
 

@@ -195,9 +195,20 @@ pub struct EncodedImage {
     pub alpha_byte_size: usize,
 }
 
+#[cfg(feature = "stop")]
+#[derive(Clone, Copy)]
+struct AnimationStopRef<'a>(&'a dyn almost_enough::Stop);
+#[cfg(feature = "stop")]
+impl core::fmt::Debug for AnimationStopRef<'_> {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        f.write_str("AnimationStopRef(..)")
+    }
+}
+
 /// Encoder config builder
 ///
-/// The lifetime is relevant only for [`Encoder::with_exif()`]. Use `Encoder<'static>` if Rust complains.
+/// The lifetime covers borrowed EXIF and per-call animation cancellation.
+/// Use `Encoder<'static>` when neither is borrowed.
 #[derive(Debug, Clone)]
 pub struct Encoder<'exif_slice> {
     /// 0-255 scale
@@ -213,10 +224,10 @@ pub struct Encoder<'exif_slice> {
     pub(crate) libavif_quality_input: Option<f32>,
     /// rav1e preset 1 (slow) 10 (fast but crappy)
     pub(crate) speed: u8,
-    /// True if RGBA input has already been premultiplied. It inserts appropriate metadata.
-    premultiplied_alpha: bool,
+    /// Whether output color data is premultiplied and signals that association.
+    pub(crate) premultiplied_alpha: bool,
     /// Which pixel format to use in AVIF file. RGB tends to give larger files.
-    color_model: ColorModel,
+    pub(crate) color_model: ColorModel,
     /// How many threads should be used (0 = match core count), None - use global rayon thread pool
     threads: Option<usize>,
     /// [`AlphaColorMode`]
@@ -224,7 +235,7 @@ pub struct Encoder<'exif_slice> {
     /// 8 or 10
     output_depth: BitDepth,
     /// [`ChromaSubsampling`]
-    chroma_subsampling: ChromaSubsampling,
+    pub(crate) chroma_subsampling: ChromaSubsampling,
     /// Dropped into MPEG infe BOX
     exif: Option<Cow<'exif_slice, [u8]>>,
     /// Optional cancellation token for interrupting encoding
@@ -234,6 +245,9 @@ pub struct Encoder<'exif_slice> {
     /// per-superblock cancellation via `Context::set_stop()`.
     #[cfg(feature = "stop")]
     stop_token: Option<almost_enough::StopToken>,
+    /// Borrowed per-operation cancellation, checked at animation row/packet boundaries.
+    #[cfg(feature = "stop")]
+    animation_stop: Option<AnimationStopRef<'exif_slice>>,
     /// Optional timeout duration for encoding
     timeout: Option<std::time::Duration>,
     /// Override color primaries (default: BT709 for sRGB)
@@ -241,14 +255,14 @@ pub struct Encoder<'exif_slice> {
     /// Override transfer characteristics (default: SRGB)
     pub(crate) transfer_characteristics: Option<TransferCharacteristics>,
     /// Override pixel range (default: Full)
-    pixel_range: Option<PixelRange>,
+    pub(crate) pixel_range: Option<PixelRange>,
     /// HDR mastering display metadata (SMPTE ST 2086)
     pub(crate) mastering_display: Option<MasteringDisplay>,
     /// HDR content light level metadata (CEA-861.3)
     pub(crate) content_light: Option<ContentLight>,
-    /// Image rotation (counter-clockwise degrees: 0, 90, 180, 270)
+    /// Image rotation as counter-clockwise quarter turns: 0..=3.
     rotation: Option<u8>,
-    /// Image mirror axis (0 = vertical/left-right, 1 = horizontal/top-bottom)
+    /// Image mirror axis (0 exchanges top/bottom, 1 exchanges left/right).
     mirror: Option<u8>,
     /// ICC color profile
     icc_profile: Option<Vec<u8>>,
@@ -343,6 +357,8 @@ impl<'exif_slice> Default for Encoder<'exif_slice> {
             cancellation_token: None,
             #[cfg(feature = "stop")]
             stop_token: None,
+            #[cfg(feature = "stop")]
+            animation_stop: None,
             timeout: None,
             color_primaries: None,
             transfer_characteristics: None,
@@ -588,6 +604,114 @@ impl<'exif_slice> Encoder<'exif_slice> {
         self.exif = Some(exif_data.into());
     }
 
+    pub(crate) fn animation_speed(&self, quantizer: u8, max_dimension: usize, is_alpha: bool) -> SpeedTweaks {
+        #[cfg_attr(not(feature = "imazen"), allow(unused_mut))]
+        let mut speed = SpeedTweaks::from_my_preset(self.speed, quantizer, max_dimension);
+        // Match the still-image policy: explicit color speed overrides do
+        // not change the independently configured monochrome alpha track.
+        #[cfg(feature = "imazen")]
+        if !is_alpha {
+            if let Some(value) = self.override_cdef { speed.cdef = Some(value); }
+            if let Some(value) = self.override_lrf { speed.lrf = Some(value); }
+            if let Some(value) = self.override_rdo_tx_decision { speed.rdo_tx_decision = Some(value); }
+            if let Some(value) = self.override_sgr_complexity { speed.sgr_complexity_full = Some(value); }
+            if let Some(value) = self.override_lru_on_skip { speed.lru_on_skip = Some(value); }
+            if let Some(value) = self.override_segmentation_complex {
+                speed.segmentation = Some(if value { SegmentationLevel::Complex } else { SegmentationLevel::Simple });
+            }
+            if let Some(value) = self.override_encode_bottomup { speed.encode_bottomup = Some(value); }
+            if let Some(value) = self.override_partition_range { speed.partition_range = Some(value); }
+            if let Some(value) = self.override_complex_prediction_modes {
+                speed.complex_prediction_modes = Some(value);
+                // An explicit mode override owns this axis, including at s6–s8.
+                speed.intra_top7 = None;
+            }
+            if let Some(value) = self.override_fast_deblock { speed.fast_deblock = Some(value); }
+        }
+        #[cfg(not(feature = "imazen"))]
+        let _ = is_alpha;
+        speed
+    }
+
+    pub(crate) fn configure_animation_coding(&self, config: &mut EncoderConfig, is_alpha: bool) {
+        #[cfg(feature = "imazen")]
+        {
+            // Match the still-image policy: lossless covers both tracks;
+            // perceptual coding controls apply only to the color track.
+            if self.lossless {
+                config.quantizer = 0;
+                config.min_quantizer = 0;
+            }
+            if !is_alpha {
+                config.enable_vaq = self.enable_vaq;
+                config.vaq_strength = self.vaq_strength;
+                config.seg_boost = self.seg_boost;
+                config.enable_trellis = self.enable_trellis;
+                config.tune = if self.tune_still_image { Tune::StillImage } else { Tune::Psychovisual };
+            }
+        }
+        #[cfg(not(feature = "imazen"))]
+        let _ = (config, is_alpha);
+    }
+
+    pub(crate) fn animation_frame_parameters(&self, is_alpha: bool) -> FrameParameters {
+        #[cfg(feature = "imazen")]
+        if !is_alpha && FRAME_HINTS_LIVE {
+            return FrameParameters {
+                frame_hints: self.override_sb_q_scale.clone().map(|map| {
+                    std::sync::Arc::new(FrameHints::new().with_sb_q_scale(map))
+                }),
+                ..Default::default()
+            };
+        }
+        #[cfg(not(feature = "imazen"))]
+        let _ = is_alpha;
+        FrameParameters::default()
+    }
+
+    pub(crate) fn configure_animation_threads(&self, config: Config) -> Config {
+        match self.threads {
+            Some(0) => config.with_threads(rayon::current_num_threads()),
+            Some(threads) => config.with_threads(threads),
+            None => config,
+        }
+    }
+
+    /// Attach a borrowed animation cancellation check. This supplements the
+    /// owned token from `with_stop`: the owned token reaches AV1 superblocks,
+    /// while this check runs during pixel preparation and between packets.
+    #[cfg(feature = "stop")]
+    pub fn with_animation_stop_ref<'call>(self, stop: &'call dyn almost_enough::Stop) -> Encoder<'call>
+    where 'exif_slice: 'call {
+        let mut encoder: Encoder<'call> = self;
+        encoder.animation_stop=Some(AnimationStopRef(stop));
+        encoder
+    }
+
+    // Native animation inputs carry integer codes, not normalized U16.
+    // Auto retains the historical U8→8 / U16→10 behavior. An explicit depth
+    // must use an entry point whose word type can represent that code domain.
+    pub(crate) fn animation_depth(&self, high_storage: bool) -> core::result::Result<u8, Error> {
+        match (self.output_depth, high_storage) {
+            (BitDepth::Auto, false) | (BitDepth::Eight, false) => Ok(8),
+            (BitDepth::Auto, true) | (BitDepth::Ten, true) => Ok(10),
+            (BitDepth::Twelve, true) => Ok(12),
+            _ => Err(Error::Unsupported("animation input type must match the requested code depth; use U16 codes for 10/12-bit output")),
+        }
+    }
+
+    pub(crate) fn animation_control(&self) -> crate::animated::AnimationControl<'_> {
+        crate::animated::AnimationControl {
+            cancellation_token: self.cancellation_token.clone(),
+            deadline: self.timeout.and_then(|t| std::time::Instant::now().checked_add(t)),
+            #[cfg(feature = "stop")]
+            stop_token: self.stop_token.clone(),
+            #[cfg(feature = "stop")]
+            call_stop: self.animation_stop.map(|stop| stop.0),
+            marker: core::marker::PhantomData,
+        }
+    }
+
     /// Set a cancellation token for interrupting encoding
     ///
     /// The encoder checks the token on every packet iteration (~5-15ns overhead per check)
@@ -715,7 +839,7 @@ impl<'exif_slice> Encoder<'exif_slice> {
 
     /// Set image rotation in the AVIF container.
     ///
-    /// Angle is counter-clockwise in degrees: 0, 90, 180, or 270.
+    /// Angle is a count of counter-clockwise quarter turns: 0, 1, 2, or 3.
     #[inline(always)]
     #[must_use]
     pub fn with_rotation(mut self, angle: u8) -> Self {
@@ -725,7 +849,7 @@ impl<'exif_slice> Encoder<'exif_slice> {
 
     /// Set image mirror axis in the AVIF container.
     ///
-    /// `0` = vertical axis (left-right flip), `1` = horizontal axis (top-bottom flip).
+    /// `0` exchanges top and bottom; `1` exchanges left and right.
     #[inline(always)]
     #[must_use]
     pub fn with_mirror(mut self, axis: u8) -> Self {
@@ -1113,6 +1237,32 @@ impl Encoder<'_> {
         }
     }
 
+    /// Configure the animation container from the same metadata as stills.
+    /// Color signaling follows the selected animation pixel conversion.
+    pub(crate) fn configure_animation_metadata(&self, image: &mut zenavif_serialize::animated::AnimatedImage, has_alpha: bool) {
+        image.set_color_description(
+            self.color_primaries.unwrap_or(ColorPrimaries::BT709) as u16,
+            self.transfer_characteristics.unwrap_or(TransferCharacteristics::SRGB) as u16,
+            if self.color_model == ColorModel::RGB { MatrixCoefficients::Identity } else { MatrixCoefficients::BT601 } as u16,
+            self.pixel_range.unwrap_or(PixelRange::Full) == PixelRange::Full,
+        );
+        image.set_premultiplied_alpha(has_alpha && self.premultiplied_alpha);
+        if let Some(exif) = &self.exif { image.set_exif(exif.to_vec()); }
+        if let Some(icc) = &self.icc_profile { image.set_icc_profile(icc.clone()); }
+        if let Some(xmp) = &self.xmp { image.set_xmp(xmp.clone()); }
+        if let Some(rotation) = self.rotation { image.set_rotation(rotation); }
+        if let Some(mirror) = self.mirror { image.set_mirror(mirror); }
+        if let Some(cl) = self.content_light {
+            image.set_clli(zenavif_serialize::ClliBox::new(cl.max_content_light_level, cl.max_frame_average_light_level));
+        }
+        if let Some(md) = self.mastering_display {
+            image.set_mdcv(zenavif_serialize::MdcvBox::new(
+                [(md.primaries[0].x, md.primaries[0].y), (md.primaries[1].x, md.primaries[1].y), (md.primaries[2].x, md.primaries[2].y)],
+                (md.white_point.x, md.white_point.y), md.max_luminance, md.min_luminance,
+            ));
+        }
+    }
+
     fn convert_alpha_8bit(&self, in_buffer: Img<&[RGBA8]>) -> Option<ImgVec<RGBA8>> {
         match self.alpha_color_mode {
             AlphaColorMode::UnassociatedDirty => None,
@@ -1120,16 +1270,8 @@ impl Encoder<'_> {
             AlphaColorMode::Premultiplied => {
                 let prem = in_buffer.pixels()
                     .map(|px| {
-                        if px.a == 0 || px.a == 255 {
-                            RGBA8::default()
-                        } else {
-                            RGBA8::new(
-                                (u16::from(px.r) * 255 / u16::from(px.a)) as u8,
-                                (u16::from(px.g) * 255 / u16::from(px.a)) as u8,
-                                (u16::from(px.b) * 255 / u16::from(px.a)) as u8,
-                                px.a,
-                            )
-                        }
+                        let premultiply = |v: u8| ((u16::from(v) * u16::from(px.a) + 127) / 255) as u8;
+                        RGBA8::new(premultiply(px.r), premultiply(px.g), premultiply(px.b), px.a)
                     })
                     .collect();
                 Some(ImgVec::new(prem, in_buffer.width(), in_buffer.height()))
@@ -2052,6 +2194,12 @@ impl SpeedTweaks {
     /// decay isolation A/B" + benchmarks/hyperparam_sizedecay_nontune_2026-07-03.tsv.
     const SMALL_PX_RDO_TX_LIVE: bool = true;
 
+    /// 2026-09-07 correction: the historical SATD-one-candidate arm described
+    /// below is no longer the default. It was fitted under a different tune;
+    /// the as-shipped audit in benchmarks/quality_drift_2026-09-07.md restores
+    /// the preset's full mode budget while retaining CDEF/transform choices.
+    /// The percentages below describe the historical fit, not the current row.
+    ///
     /// Master switch for the S10-program re-tiered s9/s10 rows (2026-07-05,
     /// zenavif docs/S10_PROGRAM.md + benchmarks/rd_gap_s10_2026-07-05.tsv).
     /// The JPEG-anchored scoreboard measured the shipped s10 row LOSING to
@@ -2260,14 +2408,13 @@ impl SpeedTweaks {
             } else {
                 None
             },
-            // S10 program: SATD-decides at the re-tiered ultra-fast rungs
-            // (s10 solo 337 -> ~277 ms/MP for BD ~-0.9; on the composed s9'
-            // it keeps 89% of the c4 win at 66% of its time). None elsewhere.
-            num_modes_rdo_override: if Self::S10_RETIER_LIVE && speed >= 9 {
-                Some(1)
-            } else {
-                None
-            },
+            // Keep the preset's full intra mode budget. The former one-candidate
+            // cap regressed the shipped tune's photo RD; removing it improves
+            // matched-quality rate on all 35 audited photo/screen images (median
+            // -3.33%, ~1.23x encode time). CDEF and transform-domain choices stay
+            // independently live. The backend's explicit mode-budget knob and
+            // its application below are retained.
+            num_modes_rdo_override: None,
             min_tile_size: match speed {
                 0 => 4096,
                 1 => 2048,
@@ -2836,4 +2983,76 @@ fn encode_to_av1<P: zenrav1e::Pixel>(
         }
     }
     Ok(out)
+}
+
+#[cfg(all(test, feature = "__expert"))]
+mod animation_speed_tests {
+    use super::*;
+
+    #[test]
+    fn animation_speed_overrides_replace_presets_and_preserve_alpha() {
+        for preset in [1, 6, 8, 10] {
+            for value in [false, true] {
+                let base = Encoder::new().with_speed(preset);
+                let params = crate::expert::InternalParams {
+                    partition_range: Some((4, 16)),
+                    complex_prediction_modes: Some(value),
+                    lrf: Some(value),
+                    fast_deblock: Some(value),
+                    ..Default::default()
+                };
+                let enc = base.clone().with_internal_params(params)
+                    .with_cdef(Some(value)).with_rdo_tx_decision(Some(value))
+                    .with_sgr_full(Some(value)).with_lru_on_skip(Some(value))
+                    .with_segmentation_complex(Some(value)).with_encode_bottomup(Some(value));
+                let speed = enc.animation_speed(enc.quantizer, 67, false);
+                assert_eq!(speed.partition_range, Some((4, 16)));
+                assert_eq!(speed.intra_top7, None);
+                let settings = speed.speed_settings();
+                assert_eq!(settings.cdef, value);
+                assert_eq!(settings.lrf, value);
+                assert_eq!(settings.fast_deblock, value);
+                assert_eq!(settings.transform.rdo_tx_decision, value);
+                assert_eq!(settings.lru_on_skip, value);
+                assert_eq!(settings.partition.encode_bottomup, value);
+                assert_eq!(settings.sgr_complexity, if value { SGRComplexityLevel::Full } else { SGRComplexityLevel::Reduced });
+                assert_eq!(settings.segmentation, if value { SegmentationLevel::Complex } else { SegmentationLevel::Simple });
+                assert_eq!(settings.prediction.prediction_modes, if value { PredictionModesSetting::ComplexAll } else { PredictionModesSetting::Simple });
+                assert_eq!(
+                    format!("{:?}", enc.animation_speed(enc.alpha_quantizer, 67, true).speed_settings()),
+                    format!("{:?}", base.animation_speed(base.alpha_quantizer, 67, true).speed_settings()),
+                    "color speed overrides must not change alpha settings",
+                );
+            }
+        }
+    }
+}
+
+#[cfg(all(test, feature = "imazen"))]
+mod animation_coding_tests {
+    use super::*;
+
+    #[test]
+    fn animation_coding_configuration_matches_color_and_alpha_policy() {
+        for enabled in [false, true] {
+            let enc = Encoder::new().with_vaq(enabled, 2.0).with_seg_boost(1.5)
+                .with_still_image_tuning(enabled).with_trellis(enabled).with_lossless(enabled);
+            for alpha in [false, true] {
+                let mut config = EncoderConfig {
+                    quantizer: 155, min_quantizer: 155,
+                    enable_vaq: false, vaq_strength: 1.0, seg_boost: 1.0,
+                    enable_trellis: false, tune: Tune::Psychovisual,
+                    ..Default::default()
+                };
+                enc.configure_animation_coding(&mut config, alpha);
+                assert_eq!(config.quantizer, if enabled { 0 } else { 155 });
+                assert_eq!(config.min_quantizer, if enabled { 0 } else { 155 });
+                assert_eq!(config.enable_vaq, enabled && !alpha);
+                assert_eq!(config.vaq_strength, if alpha { 1.0 } else { 2.0 });
+                assert_eq!(config.seg_boost, if alpha { 1.0 } else { 1.5 });
+                assert_eq!(config.enable_trellis, enabled && !alpha);
+                assert_eq!(config.tune, if enabled && !alpha { Tune::StillImage } else { Tune::Psychovisual });
+            }
+        }
+    }
 }
