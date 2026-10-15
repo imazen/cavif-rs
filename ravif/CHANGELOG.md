@@ -1,5 +1,16 @@
 # Changelog
 
+## Unreleased: native animation sample contract
+
+- Honor explicit 12-bit animation for color and alpha, including profile-2
+  container configuration. U16 animation samples are low-bit codes, validated
+  before encoding; incompatible word type/depth combinations are rejected.
+- Add borrowed per-call animation cancellation during row preparation and packet
+  processing, supplementing the owned token used inside AV1 work.
+- Pin zenrav1e's small-frame/lossless reconstruction fix and the managed decoder
+  used by regression tests. Authored odd-size 10/12-bit identity and alpha
+  samples survive encode and decode exactly.
+
 ## [Unreleased]
 
 ### Exact animation timing (2026-09-07)

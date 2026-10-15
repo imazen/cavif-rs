@@ -6,7 +6,7 @@ Supports still images, animated sequences, HDR metadata, chroma subsampling, and
 
 ## Fork of ravif
 
-Forked from [ravif](https://lib.rs/crates/ravif) v0.13.0 by Kornel Lesinski. Uses [zenrav1e](https://lib.rs/crates/zenrav1e) (Imazen's rav1e fork) instead of upstream rav1e.
+Forked from [ravif](https://lib.rs/crates/ravif) v0.13.0 by Kornel Lesiński. Uses [zenrav1e](https://lib.rs/crates/zenrav1e) (Imazen's rav1e fork) instead of upstream rav1e.
 
 Changes from upstream:
 - **Animation** — `encode_animation_rgb`, `encode_animation_rgba`, 16-bit variants
@@ -191,7 +191,13 @@ let _ = Encoder::new()
   `with_content_light(...)` (CEA-861.3), plus `with_color_primaries`,
   `with_transfer_characteristics`, and `with_pixel_range`.
 - **Animation** — `encode_animation_rgb` / `encode_animation_rgba` for 8-bit
-  sequences, and `encode_animation_rgb16` / `encode_animation_rgba16` for 16-bit.
+  sequences, and `encode_animation_rgb16` / `encode_animation_rgba16` for U16
+  storage containing low 10/12-bit codes (not normalized 0..65535 samples).
+  `Auto` keeps animation defaults U8→8 and U16→10. Explicit 10/12-bit output
+  requires U16 input with every color and alpha code within the selected depth.
+  With the `stop` feature, `with_animation_stop_ref` adds a borrowed call token
+  polled during row preparation and packet processing; the owned `with_stop`
+  token also reaches AV1 superblocks.
 
 ## License
 

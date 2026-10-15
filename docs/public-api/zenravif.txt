@@ -1,0 +1,192 @@
+# zenravif public API — supported surface (default features)
+# (regenerated on every `cargo test` by zenutils-apidoc; ZEN_API_DOC=check verifies, =off skips).
+# Encodings: crate-name prefix stripped; auto traits collapse to a
+# count + exceptions; trait impls collapse to one roster line per
+# type (method signatures live at the trait definition); blanket
+# impls omitted; re-export duplicates annotated `[also: path]`.
+# DO NOT EDIT BY HAND — commit regenerated changes with the code.
+#
+# files: zenravif.txt 158 lines (supported surface) | zenravif.features.txt 18 added (features: asm,imazen,stop,threading) | zenravif.internal.txt 32 lines (25 hidden + 21 excluded-feature)
+# arch-unique surface: (none — portable on every target)
+
+## summary
+#
+#   pub modules                                 1
+#   pub types (struct/enum/trait/alias)        16
+#   pub consts/statics                          1
+#   inherent methods                           40
+#   struct fields                              46
+#   enum variants                              27
+#   re-exports                                 11
+#   trait roster entries (type × trait)        46
+#   auto-trait-complete types                  15
+#
+# per-module pub lines:
+#   (root)                          142
+
+## items (142 lines)
+
+pub mod zenravif
+pub use At
+pub use ChromaticityPoint
+pub use ColorPrimaries
+pub use ContentLight
+pub use Img
+pub use MasteringDisplay
+pub use MatrixCoefficients
+pub use PixelRange
+pub use RGB8
+pub use RGBA8
+pub use TransferCharacteristics
+pub enum AlphaColorMode
+pub AlphaColorMode::Premultiplied
+pub AlphaColorMode::UnassociatedClean
+pub AlphaColorMode::UnassociatedDirty
+pub enum BitDepth
+pub BitDepth::Auto
+pub BitDepth::Eight
+pub BitDepth::Ten
+pub BitDepth::Twelve
+pub enum ChromaSubsampling
+pub ChromaSubsampling::Yuv420
+pub ChromaSubsampling::Yuv444
+pub enum ColorModel
+pub ColorModel::RGB
+pub ColorModel::YCbCr
+#[non_exhaustive] pub enum Error
+pub Error::Cancelled
+pub Error::EncodingError(EncodingErrorDetail)
+pub Error::TooFewPixels
+pub Error::TooManyPixels
+pub Error::TooManyPixels::height: usize
+pub Error::TooManyPixels::max_pixels: u64
+pub Error::TooManyPixels::width: usize
+pub Error::Unsupported(&'static str)
+#[non_exhaustive] pub enum ValidationError
+pub ValidationError::AlphaQualityOutOfRange
+pub ValidationError::AlphaQualityOutOfRange::valid: core::ops::range::RangeInclusive<f32>
+pub ValidationError::AlphaQualityOutOfRange::value: f32
+pub ValidationError::LibavifQualityOutOfRange
+pub ValidationError::LibavifQualityOutOfRange::valid: core::ops::range::RangeInclusive<f32>
+pub ValidationError::LibavifQualityOutOfRange::value: f32
+pub ValidationError::MirrorOutOfRange
+pub ValidationError::MirrorOutOfRange::valid: core::ops::range::RangeInclusive<u8>
+pub ValidationError::MirrorOutOfRange::value: u8
+pub ValidationError::MutuallyExclusive
+pub ValidationError::MutuallyExclusive::a: &'static str
+pub ValidationError::MutuallyExclusive::b: &'static str
+pub ValidationError::NumThreadsZero
+pub ValidationError::PartitionRangeInvalid
+pub ValidationError::PartitionRangeInvalid::max: u8
+pub ValidationError::PartitionRangeInvalid::min: u8
+pub ValidationError::QualityOutOfRange
+pub ValidationError::QualityOutOfRange::valid: core::ops::range::RangeInclusive<f32>
+pub ValidationError::QualityOutOfRange::value: f32
+pub ValidationError::RotationOutOfRange
+pub ValidationError::RotationOutOfRange::valid: core::ops::range::RangeInclusive<u8>
+pub ValidationError::RotationOutOfRange::value: u8
+pub ValidationError::SegBoostOutOfRange
+pub ValidationError::SegBoostOutOfRange::valid: core::ops::range::RangeInclusive<f64>
+pub ValidationError::SegBoostOutOfRange::value: f64
+pub ValidationError::SpeedOutOfRange
+pub ValidationError::SpeedOutOfRange::valid: core::ops::range::RangeInclusive<u8>
+pub ValidationError::SpeedOutOfRange::value: u8
+pub ValidationError::VaqStrengthOutOfRange
+pub ValidationError::VaqStrengthOutOfRange::valid: core::ops::range::RangeInclusive<f64>
+pub ValidationError::VaqStrengthOutOfRange::value: f64
+pub struct AnimFrame<'a>
+pub AnimFrame::duration_ms: u32
+pub AnimFrame::rgb: imgref::ImgRef<'a, rgb::RGB8>
+pub struct AnimFrame16<'a>
+pub AnimFrame16::duration_ms: u32
+pub AnimFrame16::rgb: imgref::ImgRef<'a, rgb::formats::rgb::Rgb<u16>>
+pub struct AnimFrameRgba<'a>
+pub AnimFrameRgba::duration_ms: u32
+pub AnimFrameRgba::rgba: imgref::ImgRef<'a, rgb::RGBA8>
+pub struct AnimFrameRgba16<'a>
+pub AnimFrameRgba16::duration_ms: u32
+pub AnimFrameRgba16::rgba: imgref::ImgRef<'a, rgb::formats::rgba::Rgba<u16>>
+pub struct CancellationToken
+pub fn CancellationToken::cancel(&self)
+pub fn CancellationToken::is_cancelled(&self) -> bool
+pub fn CancellationToken::new() -> Self
+pub fn CancellationToken::reset(&self)
+#[non_exhaustive] pub struct EncodedAnimation
+pub EncodedAnimation::avif_file: alloc::vec::Vec<u8>
+pub EncodedAnimation::frame_count: usize
+pub EncodedAnimation::total_duration_ms: u64
+#[non_exhaustive] pub struct EncodedImage
+pub EncodedImage::alpha_byte_size: usize
+pub EncodedImage::avif_file: alloc::vec::Vec<u8>
+pub EncodedImage::color_byte_size: usize
+pub struct Encoder<'exif_slice>
+pub fn Encoder<'_>::encode_animation_rgb(&self, &[AnimFrame<'_>]) -> Result<EncodedAnimation>
+pub fn Encoder<'_>::encode_animation_rgb16(&self, &[AnimFrame16<'_>]) -> Result<EncodedAnimation>
+pub fn Encoder<'_>::encode_animation_rgba(&self, &[AnimFrameRgba<'_>]) -> Result<EncodedAnimation>
+pub fn Encoder<'_>::encode_animation_rgba16(&self, &[AnimFrameRgba16<'_>]) -> Result<EncodedAnimation>
+pub fn Encoder<'_>::encode_gray8(&self, imgref::Img<&[u8]>) -> Result<EncodedImage>
+pub fn Encoder<'_>::encode_raw_planes_10_bit(&self, usize, usize, impl core::iter::traits::collect::IntoIterator<Item = [u16; 3]> + core::marker::Send, core::option::Option<impl core::iter::traits::collect::IntoIterator<Item = u16> + core::marker::Send>, zenrav1e::api::color::PixelRange, zenrav1e::api::color::MatrixCoefficients) -> Result<EncodedImage>
+pub fn Encoder<'_>::encode_raw_planes_12_bit(&self, usize, usize, impl core::iter::traits::collect::IntoIterator<Item = [u16; 3]> + core::marker::Send, core::option::Option<impl core::iter::traits::collect::IntoIterator<Item = u16> + core::marker::Send>, zenrav1e::api::color::PixelRange, zenrav1e::api::color::MatrixCoefficients) -> Result<EncodedImage>
+pub fn Encoder<'_>::encode_raw_planes_8_bit(&self, usize, usize, impl core::iter::traits::collect::IntoIterator<Item = [u8; 3]> + core::marker::Send, core::option::Option<impl core::iter::traits::collect::IntoIterator<Item = u8> + core::marker::Send>, zenrav1e::api::color::PixelRange, zenrav1e::api::color::MatrixCoefficients) -> Result<EncodedImage>
+pub fn Encoder<'_>::encode_rgb(&self, imgref::Img<&[rgb::RGB8]>) -> Result<EncodedImage>
+pub fn Encoder<'_>::encode_rgba(&self, imgref::Img<&[rgb::formats::rgba::Rgba<u8>]>) -> Result<EncodedImage>
+pub fn Encoder<'exif_slice>::new() -> Self
+pub fn Encoder<'exif_slice>::set_exif(&mut self, impl core::convert::Into<alloc::borrow::Cow<'exif_slice, [u8]>>)
+pub fn Encoder<'exif_slice>::validate(&self) -> core::result::Result<(), ValidationError>
+pub fn Encoder<'exif_slice>::with_alpha_color_mode(self, AlphaColorMode) -> Self
+pub fn Encoder<'exif_slice>::with_alpha_quality(self, f32) -> Self
+pub fn Encoder<'exif_slice>::with_bit_depth(self, BitDepth) -> Self
+pub fn Encoder<'exif_slice>::with_cancellation_token(self, CancellationToken) -> Self
+pub fn Encoder<'exif_slice>::with_chroma_subsampling(self, ChromaSubsampling) -> Self
+pub fn Encoder<'exif_slice>::with_color_primaries(self, zenrav1e::api::color::ColorPrimaries) -> Self
+pub fn Encoder<'exif_slice>::with_content_light(self, zenrav1e::api::color::ContentLight) -> Self
+pub fn Encoder<'exif_slice>::with_exif(self, impl core::convert::Into<alloc::borrow::Cow<'exif_slice, [u8]>>) -> Self
+pub fn Encoder<'exif_slice>::with_gain_map(self, GainMapData) -> Self
+pub fn Encoder<'exif_slice>::with_icc_profile(self, alloc::vec::Vec<u8>) -> Self
+pub fn Encoder<'exif_slice>::with_internal_color_model(self, ColorModel) -> Self
+pub fn Encoder<'exif_slice>::with_libavif_quality(self, f32) -> Self
+pub fn Encoder<'exif_slice>::with_mastering_display(self, zenrav1e::api::color::MasteringDisplay) -> Self
+pub fn Encoder<'exif_slice>::with_max_pixels(self, u64) -> Self
+pub fn Encoder<'exif_slice>::with_mirror(self, u8) -> Self
+pub fn Encoder<'exif_slice>::with_num_threads(self, core::option::Option<usize>) -> Self
+pub fn Encoder<'exif_slice>::with_pixel_range(self, zenrav1e::api::color::PixelRange) -> Self
+pub fn Encoder<'exif_slice>::with_quality(self, f32) -> Self
+pub fn Encoder<'exif_slice>::with_rotation(self, u8) -> Self
+pub fn Encoder<'exif_slice>::with_speed(self, u8) -> Self
+pub fn Encoder<'exif_slice>::with_timeout(self, core::time::Duration) -> Self
+pub fn Encoder<'exif_slice>::with_transfer_characteristics(self, zenrav1e::api::color::TransferCharacteristics) -> Self
+pub fn Encoder<'exif_slice>::with_xmp(self, alloc::vec::Vec<u8>) -> Self
+pub struct GainMapData
+pub GainMapData::alt_colr_cicp: core::option::Option<(u8, u8, u8, bool)>
+pub GainMapData::alt_icc: core::option::Option<alloc::vec::Vec<u8>>
+pub GainMapData::av1_data: alloc::vec::Vec<u8>
+pub GainMapData::bit_depth: u8
+pub GainMapData::chroma_subsampling: (bool, bool)
+pub GainMapData::height: u32
+pub GainMapData::metadata: alloc::vec::Vec<u8>
+pub GainMapData::monochrome: bool
+pub GainMapData::width: u32
+pub const DEFAULT_MAX_PIXELS: u64
+pub type Result<T> = core::result::Result<T, whereat::at::At<Error>>
+
+## trait impls (15 types)
+
+AlphaColorMode: Clone, Copy, Debug, Eq, PartialEq
+AnimFrame16<'a>: Clone
+AnimFrame<'a>: Clone
+AnimFrameRgba16<'a>: Clone
+AnimFrameRgba<'a>: Clone
+BitDepth: Clone, Copy, Debug, Default, Eq, PartialEq
+CancellationToken: Clone, Debug, Default
+ChromaSubsampling: Clone, Copy, Debug, Default, Eq, PartialEq
+ColorModel: Clone, Copy, Debug, Eq, PartialEq
+EncodedAnimation: Clone
+EncodedImage: Clone
+Encoder<'exif_slice>: Clone, Debug, Default
+Error: Debug, Display, Error, From<zenrav1e::api::config::InvalidConfig>, From<zenrav1e::api::util::EncoderStatus>
+GainMapData: Clone, Debug
+ValidationError: Clone, Debug, Display, Error, PartialEq
+
+## auto traits
+
+15 types implement all of: Freeze, RefUnwindSafe, Send, Sync, Unpin, UnwindSafe
