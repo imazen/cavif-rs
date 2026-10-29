@@ -15,5 +15,5 @@ api-doc-check:
 
 # Qualify the serializer used by portable consumers.
 serializer-contract-check:
-    cargo test -p zenravif --locked --no-default-features --features stop --test animation_timing --test animation_color --test animation_precision
-    cargo clippy -p zenravif --locked --no-default-features --features stop --lib -- -D warnings
+    cargo test -p zenravif --locked --no-default-features --features stop,imazen --test animation_timing --test animation_color --test animation_precision
+    cargo clippy -p zenravif --locked --no-default-features --features stop,imazen --lib -- -D warnings
