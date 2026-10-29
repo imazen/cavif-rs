@@ -8,6 +8,8 @@ encoder by Kornel Lesiński, extended for the zenrav1e fork's still-image work.
 
 ### Dependency alignment
 
+- Let application roots select the unpublished serializer through a registry patch (`9afe9a61`), avoiding a cyclic Git revision dependency with zenavif. Git consumers must provide that patch until publication.
+
 - Align the AVIF serializer git source to `94116d26` (`be086af5`); native animation color, precision and timing controls plus strict library Clippy pass. See [qualification](benchmarks/serializer_contract_2026-10-29.md).
 
 ### Animation color formats (2026-09-07)

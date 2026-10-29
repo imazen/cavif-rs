@@ -28,3 +28,14 @@ historical transitive dependency identity. Resolved lock SHA256: `de5ae58e35b850
 
 Full workspace, platform, and downstream zenavif/zenpipe checks are not covered
 by this focused gate. Consumer pins and portable lock validation remain necessary.
+
+## Consumer pin cycle repair
+
+`9afe9a61` changes the serializer dependency into a registry requirement and
+selects the same Git revision through this application's root patch. This breaks
+the revision cycle zenavif → zenravif → zenavif-serialize. Dependency-root patches
+do not propagate; unpublished consumers must select their matching serializer at
+their own root. The README documents that integration requirement.
+
+The resolved lock is identical to the prior run. The same four native controls
+and strict library Clippy pass. Receipt: `run-heavy: done rc=0 8s | peak-RSS 0.31GiB | min-avail 14872MiB | peak-load 0.85`.
