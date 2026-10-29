@@ -66,3 +66,10 @@ Then run in a terminal:
 rustup update
 cargo install cavif
 ```
+
+### Unpublished serializer dependency
+
+Until `zenavif-serialize 0.2.0` is published, Git consumers must select it at
+their application root with `[patch.crates-io]`. Use the serializer from the
+same zenavif revision as the application's decoder/parser. This repository's
+root manifest provides a pinned example; dependency-root patches do not propagate.

@@ -142,6 +142,7 @@ members = ["ravif"]
 targets = ["x86_64-unknown-linux-gnu"]
 rustdoc-args = ["--generate-link-to-definition"]
 
-# (The former [patch.crates-io] zenavif-serialize git pin moved onto the dep
-# line in ravif/Cargo.toml on 2026-08-27 so git consumers of zenravif resolve
-# without re-supplying it; a [patch] here would now be unused.)
+# Development source until serializer 0.2.0 is published. Git consumers must
+# supply this patch at their own root, or use their matching workspace member.
+[patch.crates-io]
+zenavif-serialize = { git = "https://github.com/imazen/zenavif", rev = "94116d266299f347cfd10a75d440a5bc3b598d2c" }

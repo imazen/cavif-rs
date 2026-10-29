@@ -14,11 +14,10 @@ include = ["README.md", "CHANGELOG.md", "LICENSE-AGPL3", "LICENSE-COMMERCIAL", "
 rust-version = "1.93"
 
 [dependencies]
-# Canonical serializer with checked animation output, track/poster sidecars,
-# spatial properties, static HDR and premultiplied-alpha association. This
-# published Git revision is portable for consumers; no sibling path is needed.
-# Return to a registry dependency when zenavif-serialize 0.2.0 is published.
-zenavif-serialize = { version = "0.2.0", git = "https://github.com/imazen/zenavif", rev = "94116d266299f347cfd10a75d440a5bc3b598d2c" }
+# The application root selects the unpublished serializer with a crates.io patch.
+# Keeping this a registry edge avoids a git-revision cycle with zenavif,
+# which contains the serializer and itself depends on zenravif.
+zenavif-serialize = "0.2.0"
 imgref = "1.12.0"
 # zenrav1e master (0.2.0, unpublished — crates.io tops out at 0.1.4) rather
 # than the registry, because 0.1.4 has no `FrameHints` /
