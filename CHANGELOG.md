@@ -6,6 +6,10 @@ encoder by Kornel Lesiński, extended for the zenrav1e fork's still-image work.
 
 ## [Unreleased]
 
+### Dependency alignment
+
+- Align the AVIF serializer git source to `94116d26` (`be086af5`); native animation color, precision and timing controls plus strict library Clippy pass. See [qualification](benchmarks/serializer_contract_2026-10-29.md).
+
 ### Animation color formats (2026-09-07)
 
 - Honor configured 4:2:0/4:4:4, RGB identity and full/limited range throughout animation pixels, codec contexts and container signaling. Pin zenrav1e `1447c200` for forced-4x4 inter partitions and exact partial chroma edges. See `benchmarks/animation_color_2026-09-07.md`.
