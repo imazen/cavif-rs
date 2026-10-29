@@ -12,3 +12,8 @@ api-doc:
 # Verify the committed snapshots are current
 api-doc-check:
     ZEN_API_DOC=check cargo test --manifest-path apidoc/Cargo.toml
+
+# Qualify the serializer used by portable consumers.
+serializer-contract-check:
+    cargo test -p zenravif --locked --no-default-features --features stop --test animation_timing --test animation_color --test animation_precision
+    cargo clippy -p zenravif --locked --no-default-features --features stop --lib -- -D warnings
