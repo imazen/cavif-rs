@@ -44,6 +44,8 @@ opt-level = 2
 
 [dev-dependencies]
 avif-parse = "2.0.0"
+# Writes the 16-bit PNG inputs of tests/source_depth.rs.
+lodepng = "3.12.2"
 zenavif-parse = "0.5.2"
 # `examples/gate_sweep.rs` (the release-gate A/B harness) and
 # `examples/hdr_pq10_probe.rs` (the 10-bit PQ round-trip probe): both decode the

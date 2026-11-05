@@ -1,6 +1,7 @@
 use clap::{value_parser, Arg, ArgAction, Command};
-use imgref::ImgVec;
-use zenravif::{AlphaColorMode, BitDepth, ChromaSubsampling, ColorModel, EncodedImage, Encoder, RGBA8};
+use imgref::{ImgRef, ImgVec};
+use rgb::RGBA;
+use zenravif::{AlphaColorMode, BitDepth, ChromaSubsampling, ColorModel, EncodedImage, Encoder, MatrixCoefficients, PixelRange, RGBA8};
 use rayon::prelude::*;
 use std::fs;
 use std::io::{Read, Write};
@@ -23,6 +24,22 @@ fn main() {
 enum MaybePath {
     Stdio,
     Path(PathBuf),
+}
+
+impl MaybePath {
+    fn display(&self) -> std::path::Display<'_> {
+        match self {
+            Self::Stdio => Path::new("stdin").display(),
+            Self::Path(path) => path.display(),
+        }
+    }
+}
+
+/// Decoded input. Samples deeper than 8 bits stay deep until the output depth
+/// is known, so a narrowing is always the output's and never the loader's.
+enum Source {
+    Rgba8(ImgVec<RGBA8>),
+    Rgba16(ImgVec<RGBA<u16>>),
 }
 
 fn parse_quality(arg: &str) -> Result<f32, String> {
@@ -100,7 +117,7 @@ fn run() -> Result<(), BoxError> {
             .long("depth")
             .default_value("auto")
             .value_parser(["8", "10", "auto"])
-            .help("Write 8-bit (more compatible) or 10-bit (better quality) images"))
+            .help("Write 8-bit (more compatible) or 10-bit (better quality) images. Sources deeper than 8 bits keep 10 bits unless this says 8"))
         .arg(Arg::new("yuv")
             .long("yuv")
             .default_value("444")
@@ -193,7 +210,7 @@ fn run() -> Result<(), BoxError> {
     };
 
     let process = move |data: Vec<u8>, input_path: &MaybePath| -> Result<(), BoxError> {
-        let img = load_rgba(&data, false)?;
+        let img = load_source(&data)?;
         drop(data);
         let out_path = match (&output, input_path) {
             (None, MaybePath::Path(input)) => MaybePath::Path(input.with_extension("avif")),
@@ -230,8 +247,21 @@ fn run() -> Result<(), BoxError> {
         // zenravif 0.2 returns `At<Error>` (a traced error). Surface the
         // `file:line` trace in the CLI's error output so server-side failures
         // are debuggable, then box it for the rest of the pipeline.
-        let EncodedImage { avif_file, color_byte_size, alpha_byte_size , .. } = enc
-            .encode_rgba(img.as_ref())
+        let encoded = match img {
+            Source::Rgba8(img) => enc.encode_rgba(img.as_ref()),
+            Source::Rgba16(img) => {
+                let output_bits = if depth == BitDepth::Eight { 8 } else { 10 };
+                if !quiet {
+                    eprintln!("{}: 16-bit source narrowed to {output_bits}-bit output", input_path.display());
+                }
+                if output_bits == 8 {
+                    enc.encode_rgba(narrow_to_8_bit(img.as_ref()).as_ref())
+                } else {
+                    encode_10_bit(&enc, img, color_model, dirty_alpha)
+                }
+            },
+        };
+        let EncodedImage { avif_file, color_byte_size, alpha_byte_size , .. } = encoded
             .map_err(|e| -> BoxError { format!("{}", e.full_trace()).into() })?;
         match out_path {
             MaybePath::Path(ref p) => {
@@ -278,36 +308,110 @@ fn run() -> Result<(), BoxError> {
 }
 
 #[cfg(not(feature = "cocoa_image"))]
-fn load_rgba(data: &[u8], premultiplied_alpha: bool) -> Result<ImgVec<RGBA8>, BoxError> {
-    use rgb::prelude::*;
+fn load_source(data: &[u8]) -> Result<Source, BoxError> {
+    use load_image::export::imgref::ImgVecKind;
 
-    let img = load_image::load_data(data)?.into_imgvec();
-    let mut img = match img {
-        load_image::export::imgref::ImgVecKind::RGB8(img) => img.map_buf(|buf| buf.into_iter().map(|px| px.with_alpha(255)).collect()),
-        load_image::export::imgref::ImgVecKind::RGBA8(img) => img,
-        load_image::export::imgref::ImgVecKind::RGB16(img) => img.map_buf(|buf| buf.into_iter().map(|px| px.map(|c| (c >> 8) as u8).with_alpha(255)).collect()),
-        load_image::export::imgref::ImgVecKind::RGBA16(img) => img.map_buf(|buf| buf.into_iter().map(|px| px.map(|c| (c >> 8) as u8)).collect()),
-        load_image::export::imgref::ImgVecKind::GRAY8(img) => img.map_buf(|buf| buf.into_iter().map(|g| { let c = g.value(); RGBA8::new(c,c,c,255) }).collect()),
-        load_image::export::imgref::ImgVecKind::GRAY16(img) => img.map_buf(|buf| buf.into_iter().map(|g| { let c = (g.value()>>8) as u8; RGBA8::new(c,c,c,255) }).collect()),
-        load_image::export::imgref::ImgVecKind::GRAYA8(img) => img.map_buf(|buf| buf.into_iter().map(|g| { let c = g.value(); RGBA8::new(c,c,c,g.a) }).collect()),
-        load_image::export::imgref::ImgVecKind::GRAYA16(img) => img.map_buf(|buf| buf.into_iter().map(|g| { let c = (g.value()>>8) as u8; RGBA8::new(c,c,c,(g.a>>8) as u8) }).collect()),
+    let deep: ImgVec<RGBA<u16>> = match load_image::load_data(data)?.into_imgvec() {
+        ImgVecKind::RGB8(img) => return Ok(Source::Rgba8(img.map_buf(|buf| buf.into_iter().map(|px| px.with_alpha(255)).collect()))),
+        ImgVecKind::RGBA8(img) => return Ok(Source::Rgba8(img)),
+        ImgVecKind::GRAY8(img) => return Ok(Source::Rgba8(img.map_buf(|buf| buf.into_iter().map(|g| { let c = g.value(); RGBA8::new(c,c,c,255) }).collect()))),
+        ImgVecKind::GRAYA8(img) => return Ok(Source::Rgba8(img.map_buf(|buf| buf.into_iter().map(|g| { let c = g.value(); RGBA8::new(c,c,c,g.a) }).collect()))),
+        ImgVecKind::RGB16(img) => img.map_buf(|buf| buf.into_iter().map(|px| px.with_alpha(u16::MAX)).collect()),
+        ImgVecKind::RGBA16(img) => img,
+        ImgVecKind::GRAY16(img) => img.map_buf(|buf| buf.into_iter().map(|g| { let c = g.value(); RGBA::new(c,c,c,u16::MAX) }).collect()),
+        ImgVecKind::GRAYA16(img) => img.map_buf(|buf| buf.into_iter().map(|g| { let c = g.value(); RGBA::new(c,c,c,g.a) }).collect()),
     };
-
-    if premultiplied_alpha {
-        img.pixels_mut().for_each(|px| {
-            px.r = (u16::from(px.r) * u16::from(px.a) / 255) as u8;
-            px.g = (u16::from(px.g) * u16::from(px.a) / 255) as u8;
-            px.b = (u16::from(px.b) * u16::from(px.a) / 255) as u8;
-        });
+    // Eight-bit samples in 16-bit storage lose nothing here, and then encode
+    // exactly as the same image stored in 8 bits does.
+    if deep.pixels().all(|px| [px.r, px.g, px.b, px.a].iter().all(|c| c % 257 == 0)) {
+        return Ok(Source::Rgba8(narrow_to_8_bit(deep.as_ref())));
     }
-    Ok(img)
+    Ok(Source::Rgba16(deep))
 }
 
 #[cfg(feature = "cocoa_image")]
-fn load_rgba(data: &[u8], premultiplied_alpha: bool) -> Result<ImgVec<RGBA8>, BoxError> {
-    if premultiplied_alpha {
-        Ok(cocoa_image::decode_image_as_rgba_premultiplied(data)?)
-    } else {
-        Ok(cocoa_image::decode_image_as_rgba(data)?)
+fn load_source(data: &[u8]) -> Result<Source, BoxError> {
+    Ok(Source::Rgba8(cocoa_image::decode_image_as_rgba(data)?))
+}
+
+fn narrow_to_8_bit(img: ImgRef<'_, RGBA<u16>>) -> ImgVec<RGBA8> {
+    let narrow = |c: u16| ((u32::from(c) * 255 + 32767) / 65535) as u8;
+    let pixels = img.pixels().map(|px| RGBA8::new(narrow(px.r), narrow(px.g), narrow(px.b), narrow(px.a))).collect();
+    ImgVec::new(pixels, img.width(), img.height())
+}
+
+/// Encodes 16-bit samples through 10-bit planes without an 8-bit stage.
+///
+/// Uses the matrix and the full range the 8-bit entry points use.
+fn encode_10_bit(enc: &Encoder, mut img: ImgVec<RGBA<u16>>, color_model: ColorModel, dirty_alpha: bool) -> zenravif::Result<EncodedImage> {
+    let (width, height) = (img.width(), img.height());
+    if !dirty_alpha {
+        clear_transparent_colors(&mut img);
+    }
+    let to_ten = |c: u16| ((u32::from(c) * 1023 + 32767) / 65535) as u16;
+    let planes = img.pixels().map(|px| match color_model {
+        ColorModel::YCbCr => rgb16_to_10_bit_ycbcr(px),
+        ColorModel::RGB => [to_ten(px.g), to_ten(px.b), to_ten(px.r)],
+    });
+    let matrix = match color_model {
+        ColorModel::YCbCr => MatrixCoefficients::BT601,
+        ColorModel::RGB => MatrixCoefficients::Identity,
+    };
+    if img.pixels().all(|px| px.a == u16::MAX) {
+        return enc.encode_raw_planes_10_bit(width, height, planes, None::<[u16; 0]>, PixelRange::Full, matrix);
+    }
+    let alpha = img.pixels().map(|px| to_ten(px.a));
+    enc.encode_raw_planes_10_bit(width, height, planes, Some(alpha), PixelRange::Full, matrix)
+}
+
+fn rgb16_to_10_bit_ycbcr(px: RGBA<u16>) -> [u16; 3] {
+    const KR: f64 = 0.2990;
+    const KG: f64 = 0.5870;
+    const KB: f64 = 0.1140;
+    const MAX: f64 = 1023.;
+    const NEUTRAL: f64 = 512.;
+    let scale = MAX / 65535.;
+    let (r, g, b) = (f64::from(px.r) * scale, f64::from(px.g) * scale, f64::from(px.b) * scale);
+    let y = KR * r + KG * g + KB * b;
+    let cb = (b - y) * 0.5 / (1. - KB) + NEUTRAL;
+    let cr = (r - y) * 0.5 / (1. - KR) + NEUTRAL;
+    [y, cb, cr].map(|v| v.round().clamp(0., MAX) as u16)
+}
+
+/// Gives fully transparent pixels the average color of their visible neighbors,
+/// or of the visible image, because their own color is never seen.
+///
+/// Simplified from the 8-bit `blurred_dirty_alpha`, which also blurs the result:
+/// the output depends only on visible samples, but this can cost more bytes.
+fn clear_transparent_colors(img: &mut ImgVec<RGBA<u16>>) {
+    let (width, height) = (img.width(), img.height());
+    let mut image_sum = [0u64; 3];
+    let mut image_count = 0u64;
+    for px in img.pixels().filter(|px| px.a != 0) {
+        image_sum = [image_sum[0] + u64::from(px.r), image_sum[1] + u64::from(px.g), image_sum[2] + u64::from(px.b)];
+        image_count += 1;
+    }
+    let original = img.clone();
+    let average = |sum: [u64; 3], count: u64| sum.map(|c| (c / count.max(1)) as u16);
+    let background = average(image_sum, image_count);
+    for y in 0..height {
+        for x in 0..width {
+            if original[(x, y)].a != 0 {
+                continue;
+            }
+            let mut sum = [0u64; 3];
+            let mut count = 0u64;
+            for ny in y.saturating_sub(1)..(y + 2).min(height) {
+                for nx in x.saturating_sub(1)..(x + 2).min(width) {
+                    let n = original[(nx, ny)];
+                    if n.a != 0 {
+                        sum = [sum[0] + u64::from(n.r), sum[1] + u64::from(n.g), sum[2] + u64::from(n.b)];
+                        count += 1;
+                    }
+                }
+            }
+            let [r, g, b] = if count == 0 { background } else { average(sum, count) };
+            img[(x, y)] = RGBA::new(r, g, b, 0);
+        }
     }
 }
