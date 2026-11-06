@@ -12,7 +12,7 @@ encoder by Kornel Lesiński, extended for the zenrav1e fork's still-image work.
 
 ### cavif source depth
 
-- Add opt-in `--depth=12` for RGB and YCbCr color plus alpha, preserving deep input through 12-bit planes. Automatic depth remains unchanged.
+- Add opt-in `--depth=12` for RGB and YCbCr color plus alpha, preserving deep input through 12-bit planes (`3acba70f`). Automatic depth remains unchanged.
 
 - 16-bit sources no longer pass through 8 bits on the way to 10-bit AV1. `--depth=8` is the explicit narrowing and rounds to nearest; both narrowing outputs print a note unless `--quiet`. Eight-bit samples stored in 16 bits encode exactly as the 8-bit image does.
 
@@ -444,3 +444,19 @@ encoder by Kornel Lesiński, extended for the zenrav1e fork's still-image work.
   (`FRAME_HINTS_LIVE = true`); the const remains public so a caller built
   against a zenrav1e without `FrameParameters::frame_hints` can still fail
   honestly instead of silently double-encoding (13b1ca4b).
+
+
+### CLI depth qualification (2026-11-06)
+
+The explicit 12-bit CLI regression rejects the original parser and passes after
+the opt-in route is connected. Native decoding verifies all four combinations
+of 8-/16-bit input and RGB/YCbCr output with alpha. The RGB16 case retains more
+than 256 decoded levels and stays within four 12-bit codes of nearest scaling.
+The existing default-ten-bit and explicit-eight-bit assertions remain intact.
+Independent ffmpeg output equals all three native decoded RGB planes at both
+10 and 12 bits. Scoped strict Clippy and formatting pass.
+
+Full `cargo clippy -p cavif --all-targets -- -D warnings` remains blocked by
+existing `gate_sweep` chunks-exact lint findings and an `animation_native_samples`
+call to `with_lossless` without its required expert feature. This qualification
+covers the CLI and source-depth target; it does not claim a green full workspace.
