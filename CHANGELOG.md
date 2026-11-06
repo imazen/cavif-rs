@@ -466,3 +466,9 @@ is ignored and absent in fresh clones. The job and local recipe now generate it
 before the locked checks. The existing pure library job still fails
 `default_encoder_omits_colr_box`; this is outside the CLI change and its assertion
 is preserved.
+
+Upstream dav1d CLI independently reads the native ten- and twelve-bit output:
+all three raw planes equal the Rust decoder exactly. CI uses this small native
+reader to avoid ffmpeg's 99-package provisioning path, which hit the setup
+network timeout. Both ffmpeg oracle tests remain available and pass locally.
+The independent-reader cases are selected explicitly by their CI/just recipes.

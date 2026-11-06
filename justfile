@@ -23,3 +23,7 @@ cli-depth-check:
     cargo generate-lockfile
     cargo test --locked -p cavif --test source_depth
     cargo test --locked -p cavif --test source_depth oracle_ffmpeg -- --ignored
+
+cli-dav1d-depth-check:
+    cargo generate-lockfile
+    cargo test --locked -p cavif --test source_depth oracle_dav1d -- --ignored

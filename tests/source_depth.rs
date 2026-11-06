@@ -174,7 +174,7 @@ fn oracle_ffmpeg_reads_ten_bit_samples() {
     let path = dir.join("source_depth_oracle.avif");
     std::fs::write(&path, &avif).unwrap();
     let output = Command::new("ffmpeg")
-        .args(["-v", "error", "-i"])
+        .args(["-v", "error", "-threads", "1", "-i"])
         .arg(&path)
         .args(["-f", "rawvideo", "-pix_fmt", "gbrp10le", "-"])
         .output()
@@ -263,7 +263,7 @@ fn oracle_ffmpeg_reads_twelve_bit_samples() {
     let avif = cavif(&twelve_bit_png(16, false), &["--quality=100", "--color=rgb", "--depth=12"]);
     let path = std::path::PathBuf::from(env!("CARGO_TARGET_TMPDIR")).join("source_depth_twelve_oracle.avif");
     std::fs::write(&path, &avif).unwrap();
-    let output = Command::new("ffmpeg").args(["-v", "error", "-i"]).arg(&path)
+    let output = Command::new("ffmpeg").args(["-v", "error", "-threads", "1", "-i"]).arg(&path)
         .args(["-f", "rawvideo", "-pix_fmt", "gbrp12le", "-"]).output().unwrap();
     assert!(output.status.success(), "{}", String::from_utf8_lossy(&output.stderr));
     assert_eq!(output.stdout.len(), WIDTH * HEIGHT * 3 * 2);
@@ -273,5 +273,32 @@ fn oracle_ffmpeg_reads_twelve_bit_samples() {
     assert_eq!(frame.bit_depth(), 12);
     for plane in 0..3 {
         assert_eq!(&words[plane * WIDTH * HEIGHT..(plane + 1) * WIDTH * HEIGHT], &plane_16(&frame, plane));
+    }
+}
+
+
+#[test]
+#[ignore = "requires upstream dav1d CLI on PATH as an independent decoder"]
+fn oracle_dav1d_reads_ten_and_twelve_bit_samples() {
+    for bits in [10, 12] {
+        let depth = format!("--depth={bits}");
+        let avif = cavif(&twelve_bit_png(16, false), &["--quality=100", "--color=rgb", &depth]);
+        let parsed = avif_parse::read_avif(&mut avif.as_slice()).unwrap();
+        let dir = std::path::PathBuf::from(env!("CARGO_TARGET_TMPDIR"));
+        let input = dir.join(format!("source_depth_{bits}_oracle.obu"));
+        let output = dir.join(format!("source_depth_{bits}_oracle.yuv"));
+        std::fs::write(&input, &parsed.primary_item).unwrap();
+        let process = Command::new("dav1d")
+            .args(["--demuxer", "section5", "--muxer", "yuv", "--threads", "1", "-i"])
+            .arg(&input).arg("-o").arg(&output).output().unwrap();
+        assert!(process.status.success(), "{}", String::from_utf8_lossy(&process.stderr));
+        let bytes = std::fs::read(&output).unwrap();
+        assert_eq!(bytes.len(), WIDTH * HEIGHT * 3 * 2);
+        let words: Vec<u16> = bytes.as_chunks::<2>().0.iter().map(|b| u16::from_le_bytes(*b)).collect();
+        let frame = decode_obu(&parsed.primary_item);
+        assert_eq!(frame.bit_depth(), bits);
+        for plane in 0..3 {
+            assert_eq!(&words[plane * WIDTH * HEIGHT..(plane + 1) * WIDTH * HEIGHT], &plane_16(&frame, plane), "{bits}-bit plane {plane}");
+        }
     }
 }

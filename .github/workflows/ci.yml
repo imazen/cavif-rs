@@ -47,18 +47,18 @@ jobs:
       - name: Install independent decoder
         timeout-minutes: 5
         run: |
-          if ! command -v ffmpeg >/dev/null; then
-            sudo apt-get -o Acquire::Retries=1 -o Acquire::http::Timeout=30 -o Acquire::https::Timeout=30 -o DPkg::Lock::Timeout=120 install -y ffmpeg
+          if ! command -v dav1d >/dev/null; then
+            sudo apt-get -o Acquire::Retries=1 -o Acquire::http::Timeout=30 -o Acquire::https::Timeout=30 -o DPkg::Lock::Timeout=120 install --no-install-recommends -y dav1d
           fi
-          ffmpeg -version
+          dav1d --version
       - name: Resolve workspace lockfile
         run: cargo generate-lockfile
       - name: Check CLI and depth tests
         run: cargo clippy --locked -p cavif --bin cavif --test source_depth -- -D warnings
       - name: Verify source depth and automatic defaults
         run: cargo test --locked -p cavif --test source_depth
-      - name: Compare native ten- and twelve-bit planes with ffmpeg
-        run: cargo test --locked -p cavif --test source_depth oracle_ffmpeg -- --ignored
+      - name: Compare native ten- and twelve-bit planes with upstream dav1d
+        run: cargo test --locked -p cavif --test source_depth oracle_dav1d -- --ignored
 
   # ==========================================================================
   # Pure Rust testing (no asm, no lcms2)
