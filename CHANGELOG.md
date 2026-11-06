@@ -460,3 +460,9 @@ Full `cargo clippy -p cavif --all-targets -- -D warnings` remains blocked by
 existing `gate_sweep` chunks-exact lint findings and an `animation_native_samples`
 call to `with_lossless` without its required expert feature. This qualification
 covers the CLI and source-depth target; it does not claim a green full workspace.
+
+The first new CLI CI job stopped before compilation because the root lockfile
+is ignored and absent in fresh clones. The job and local recipe now generate it
+before the locked checks. The existing pure library job still fails
+`default_encoder_omits_colr_box`; this is outside the CLI change and its assertion
+is preserved.

@@ -46,6 +46,8 @@ jobs:
       - uses: ilammy/setup-nasm@v1
       - name: Install independent decoder
         run: sudo apt-get update && sudo apt-get install -y ffmpeg
+      - name: Resolve workspace lockfile
+        run: cargo generate-lockfile
       - name: Check CLI and depth tests
         run: cargo clippy --locked -p cavif --bin cavif --test source_depth -- -D warnings
       - name: Verify source depth and automatic defaults
