@@ -17,3 +17,8 @@ api-doc-check:
 serializer-contract-check:
     cargo test -p zenravif --locked --no-default-features --features stop,imazen --test animation_timing --test animation_color --test animation_precision
     cargo clippy -p zenravif --locked --no-default-features --features stop,imazen --lib -- -D warnings
+
+# Explicit deep-output checks, including independent ffmpeg plane equality.
+cli-depth-check:
+    cargo test --locked -p cavif --test source_depth
+    cargo test --locked -p cavif --test source_depth oracle_ffmpeg -- --ignored

@@ -200,3 +200,78 @@ fn oracle_ffmpeg_reads_ten_bit_samples() {
     assert_eq!(&words[n..2 * n], &b[..], "blue plane");
     assert_eq!(&words[2 * n..3 * n], &r[..], "red plane");
 }
+
+/// Permuted 12-bit codes exercise precision without a smooth-ramp predictor.
+fn twelve_bit_sample(x: usize, channel: usize) -> u16 {
+    let code = ((x * 4051 + channel * 977 + 17) & 4095) as u32;
+    ((code * 65535 + 2047) / 4095) as u16
+}
+
+fn twelve_bit_png(source_bits: u32, alpha: bool) -> Vec<u8> {
+    let channels = if alpha { 4 } else { 3 };
+    let mut bytes = Vec::new();
+    for _ in 0..HEIGHT {
+        for x in 0..WIDTH {
+            for channel in 0..channels {
+                let sample = twelve_bit_sample(x, channel);
+                if source_bits == 16 {
+                    bytes.extend_from_slice(&sample.to_be_bytes());
+                } else {
+                    bytes.push((sample >> 8) as u8);
+                }
+            }
+        }
+    }
+    let color = if alpha { lodepng::ColorType::RGBA } else { lodepng::ColorType::RGB };
+    lodepng::encode_memory(&bytes, WIDTH, HEIGHT, color, source_bits).unwrap()
+}
+
+#[test]
+fn twelve_bits_are_explicit_for_both_source_depths_and_color_models() {
+    for source_bits in [8, 16] {
+        for color in ["rgb", "ycbcr"] {
+            let avif = cavif(&twelve_bit_png(source_bits, true),
+                &["--quality=100", "--depth=12", "--dirty-alpha", "--color", color]);
+            let parsed = avif_parse::read_avif(&mut avif.as_slice()).unwrap();
+            let frame = decode_obu(&parsed.primary_item);
+            assert_eq!(frame.bit_depth(), 12, "{source_bits}-bit {color}");
+            let alpha = decode_obu(parsed.alpha_item.as_ref().expect("alpha retained"));
+            assert_eq!(alpha.bit_depth(), 12, "alpha {source_bits}-bit {color}");
+            for plane in 0..3 {
+                assert!(plane_16(&frame, plane).iter().all(|&v| v <= 4095));
+            }
+            if source_bits == 16 {
+                assert!(distinct(&plane_16(&alpha, 0)) > 256);
+                if color == "rgb" {
+                    for (plane, channel) in [(0, 1), (1, 2), (2, 0)] {
+                        let samples = plane_16(&frame, plane);
+                        assert!(distinct(&samples) > 256);
+                        for (i, &got) in samples.iter().enumerate() {
+                            let expected = ((u32::from(twelve_bit_sample(i % WIDTH, channel)) * 4095 + 32767) / 65535) as u16;
+                            assert!(got.abs_diff(expected) <= 4, "channel {channel} sample {i}: {got} != {expected}");
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
+
+#[test]
+#[ignore = "requires ffmpeg on PATH as an independent decoder"]
+fn oracle_ffmpeg_reads_twelve_bit_samples() {
+    let avif = cavif(&twelve_bit_png(16, false), &["--quality=100", "--color=rgb", "--depth=12"]);
+    let path = std::path::PathBuf::from(env!("CARGO_TARGET_TMPDIR")).join("source_depth_twelve_oracle.avif");
+    std::fs::write(&path, &avif).unwrap();
+    let output = Command::new("ffmpeg").args(["-v", "error", "-i"]).arg(&path)
+        .args(["-f", "rawvideo", "-pix_fmt", "gbrp12le", "-"]).output().unwrap();
+    assert!(output.status.success(), "{}", String::from_utf8_lossy(&output.stderr));
+    assert_eq!(output.stdout.len(), WIDTH * HEIGHT * 3 * 2);
+    let words: Vec<u16> = output.stdout.as_chunks::<2>().0.iter().map(|b| u16::from_le_bytes(*b)).collect();
+    let parsed = avif_parse::read_avif(&mut avif.as_slice()).unwrap();
+    let frame = decode_obu(&parsed.primary_item);
+    assert_eq!(frame.bit_depth(), 12);
+    for plane in 0..3 {
+        assert_eq!(&words[plane * WIDTH * HEIGHT..(plane + 1) * WIDTH * HEIGHT], &plane_16(&frame, plane));
+    }
+}
