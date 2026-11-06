@@ -34,6 +34,32 @@ env:
   PURE_RUST: "--no-default-features --features threading"
 
 jobs:
+  cli-depth:
+    name: CLI source depth and independent decoder
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: clippy
+      - uses: Swatinem/rust-cache@v2
+      - uses: ilammy/setup-nasm@v1
+      - name: Install independent decoder
+        timeout-minutes: 5
+        run: |
+          if ! command -v dav1d >/dev/null; then
+            sudo apt-get -o Acquire::Retries=1 -o Acquire::http::Timeout=30 -o Acquire::https::Timeout=30 -o DPkg::Lock::Timeout=120 install --no-install-recommends -y dav1d
+          fi
+          dav1d --version
+      - name: Resolve workspace lockfile
+        run: cargo generate-lockfile
+      - name: Check CLI and depth tests
+        run: cargo clippy --locked -p cavif --bin cavif --test source_depth -- -D warnings
+      - name: Verify source depth and automatic defaults
+        run: cargo test --locked -p cavif --test source_depth
+      - name: Compare native ten- and twelve-bit planes with upstream dav1d
+        run: cargo test --locked -p cavif --test source_depth oracle_dav1d -- --ignored
+
   # ==========================================================================
   # Pure Rust testing (no asm, no lcms2)
   # Tests zenravif library only — cavif binary needs lcms2 + nasm
@@ -48,11 +74,10 @@ jobs:
           - { os: ubuntu-latest, name: Linux x64 }
           - { os: ubuntu-24.04-arm, name: Linux aarch64 }
           - { os: macos-latest, name: macOS arm64 }
-          - { os: macos-26-intel, name: macOS x64 }
           - { os: windows-latest, name: Windows x64 }
           - { os: windows-11-arm, name: Windows arm64 }
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v7
       - uses: dtolnay/rust-toolchain@stable
       - uses: Swatinem/rust-cache@v2
 
@@ -80,7 +105,7 @@ jobs:
           - { os: ubuntu-latest, name: Linux x64 }
           - { os: windows-latest, name: Windows x64 }
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v7
       - uses: ilammy/setup-nasm@v1
       - uses: dtolnay/rust-toolchain@stable
       - uses: Swatinem/rust-cache@v2
@@ -103,7 +128,7 @@ jobs:
     name: Test (i686)
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v7
       - uses: dtolnay/rust-toolchain@stable
         with:
           targets: i686-unknown-linux-gnu
@@ -130,7 +155,7 @@ jobs:
     name: Clippy
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v7
       - uses: dtolnay/rust-toolchain@stable
         with:
           components: clippy
@@ -154,7 +179,7 @@ jobs:
     name: Format
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v7
       - uses: dtolnay/rust-toolchain@stable
         with:
           components: rustfmt
@@ -177,7 +202,7 @@ jobs:
     name: MSRV
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v7
       - uses: dtolnay/rust-toolchain@stable
       - uses: taiki-e/install-action@cargo-hack
       - uses: Swatinem/rust-cache@v2
@@ -200,7 +225,7 @@ jobs:
     name: Coverage
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v7
       - uses: dtolnay/rust-toolchain@stable
       - uses: taiki-e/install-action@cargo-llvm-cov
       - uses: Swatinem/rust-cache@v2

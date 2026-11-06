@@ -40,6 +40,7 @@ There are additional options that tweak AVIF color space. The defaults in `cavif
 
  * `--dirty-alpha` — Preserve RGB values of fully transparent pixels (not recommended). By default irrelevant color of transparent pixels is cleared to avoid wasting space.
  * `--color=rgb` — Encode using RGB instead of YCbCr color space. Makes colors closer to lossless, but makes files larger. Use only if you need to avoid even smallest color shifts.
+ * `--depth=12` — Explicitly encode 12-bit color and alpha from 8- or 16-bit sources. This is opt-in; automatic output remains at most 10 bits.
  * `--depth=8` — Encode using 8-bit color depth instead of 10-bit. This results in a slightly worse quality/compression ratio, but is more compatible. Without it, 16-bit sources are encoded from their 16-bit samples at 10 bits per channel.
 
 ## Compatibility
