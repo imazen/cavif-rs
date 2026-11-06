@@ -12,6 +12,8 @@ encoder by Kornel Lesiński, extended for the zenrav1e fork's still-image work.
 
 ### cavif source depth
 
+- Add opt-in `--depth=12` for RGB and YCbCr color plus alpha, preserving deep input through 12-bit planes. Automatic depth remains unchanged.
+
 - 16-bit sources no longer pass through 8 bits on the way to 10-bit AV1. `--depth=8` is the explicit narrowing and rounds to nearest; both narrowing outputs print a note unless `--quiet`. Eight-bit samples stored in 16 bits encode exactly as the 8-bit image does.
 
 ### Dependency alignment

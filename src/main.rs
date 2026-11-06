@@ -1,3 +1,5 @@
+#![forbid(unsafe_code)]
+
 use clap::{value_parser, Arg, ArgAction, Command};
 use imgref::{ImgRef, ImgVec};
 use rgb::RGBA;
@@ -116,8 +118,8 @@ fn run() -> Result<(), BoxError> {
         .arg(Arg::new("depth")
             .long("depth")
             .default_value("auto")
-            .value_parser(["8", "10", "auto"])
-            .help("Write 8-bit (more compatible) or 10-bit (better quality) images. Sources deeper than 8 bits keep 10 bits unless this says 8"))
+            .value_parser(["8", "10", "12", "auto"])
+            .help("Write 8-, 10-, or opt-in 12-bit images. Auto keeps deep sources at 10 bits; 12 bits requires --depth=12"))
         .arg(Arg::new("yuv")
             .long("yuv")
             .default_value("444")
@@ -157,6 +159,7 @@ fn run() -> Result<(), BoxError> {
     let depth = match args.get_one::<String>("depth").expect("default").as_str() {
         "8" => BitDepth::Eight,
         "10" => BitDepth::Ten,
+        "12" => BitDepth::Twelve,
         _ => BitDepth::Auto,
     };
 
@@ -250,14 +253,18 @@ fn run() -> Result<(), BoxError> {
         let encoded = match img {
             Source::Rgba8(img) => enc.encode_rgba(img.as_ref()),
             Source::Rgba16(img) => {
-                let output_bits = if depth == BitDepth::Eight { 8 } else { 10 };
+                let output_bits = match depth {
+                    BitDepth::Eight => 8,
+                    BitDepth::Twelve => 12,
+                    _ => 10,
+                };
                 if !quiet {
                     eprintln!("{}: 16-bit source narrowed to {output_bits}-bit output", input_path.display());
                 }
                 if output_bits == 8 {
                     enc.encode_rgba(narrow_to_8_bit(img.as_ref()).as_ref())
                 } else {
-                    encode_10_bit(&enc, img, color_model, dirty_alpha)
+                    encode_deep(&enc, img, color_model, dirty_alpha, output_bits)
                 }
             },
         };
@@ -340,42 +347,46 @@ fn narrow_to_8_bit(img: ImgRef<'_, RGBA<u16>>) -> ImgVec<RGBA8> {
     ImgVec::new(pixels, img.width(), img.height())
 }
 
-/// Encodes 16-bit samples through 10-bit planes without an 8-bit stage.
+/// Encodes 16-bit samples through 10- or 12-bit planes without an 8-bit stage.
 ///
 /// Uses the matrix and the full range the 8-bit entry points use.
-fn encode_10_bit(enc: &Encoder, mut img: ImgVec<RGBA<u16>>, color_model: ColorModel, dirty_alpha: bool) -> zenravif::Result<EncodedImage> {
+fn encode_deep(enc: &Encoder, mut img: ImgVec<RGBA<u16>>, color_model: ColorModel, dirty_alpha: bool, bits: u8) -> zenravif::Result<EncodedImage> {
     let (width, height) = (img.width(), img.height());
     if !dirty_alpha {
         clear_transparent_colors(&mut img);
     }
-    let to_ten = |c: u16| ((u32::from(c) * 1023 + 32767) / 65535) as u16;
+    let max = (1u32 << bits) - 1;
+    let to_depth = |c: u16| ((u32::from(c) * max + 32767) / 65535) as u16;
     let planes = img.pixels().map(|px| match color_model {
-        ColorModel::YCbCr => rgb16_to_10_bit_ycbcr(px),
-        ColorModel::RGB => [to_ten(px.g), to_ten(px.b), to_ten(px.r)],
+        ColorModel::YCbCr => rgb16_to_deep_ycbcr(px, bits),
+        ColorModel::RGB => [to_depth(px.g), to_depth(px.b), to_depth(px.r)],
     });
     let matrix = match color_model {
         ColorModel::YCbCr => MatrixCoefficients::BT601,
         ColorModel::RGB => MatrixCoefficients::Identity,
     };
-    if img.pixels().all(|px| px.a == u16::MAX) {
-        return enc.encode_raw_planes_10_bit(width, height, planes, None::<[u16; 0]>, PixelRange::Full, matrix);
+    let alpha = if img.pixels().all(|px| px.a == u16::MAX) { None } else {
+        Some(img.pixels().map(|px| to_depth(px.a)))
+    };
+    if bits == 12 {
+        enc.encode_raw_planes_12_bit(width, height, planes, alpha, PixelRange::Full, matrix)
+    } else {
+        enc.encode_raw_planes_10_bit(width, height, planes, alpha, PixelRange::Full, matrix)
     }
-    let alpha = img.pixels().map(|px| to_ten(px.a));
-    enc.encode_raw_planes_10_bit(width, height, planes, Some(alpha), PixelRange::Full, matrix)
 }
 
-fn rgb16_to_10_bit_ycbcr(px: RGBA<u16>) -> [u16; 3] {
+fn rgb16_to_deep_ycbcr(px: RGBA<u16>, bits: u8) -> [u16; 3] {
     const KR: f64 = 0.2990;
     const KG: f64 = 0.5870;
     const KB: f64 = 0.1140;
-    const MAX: f64 = 1023.;
-    const NEUTRAL: f64 = 512.;
-    let scale = MAX / 65535.;
+    let max = f64::from((1u32 << bits) - 1);
+    let neutral = f64::from(1u32 << (bits - 1));
+    let scale = max / 65535.;
     let (r, g, b) = (f64::from(px.r) * scale, f64::from(px.g) * scale, f64::from(px.b) * scale);
     let y = KR * r + KG * g + KB * b;
-    let cb = (b - y) * 0.5 / (1. - KB) + NEUTRAL;
-    let cr = (r - y) * 0.5 / (1. - KR) + NEUTRAL;
-    [y, cb, cr].map(|v| v.round().clamp(0., MAX) as u16)
+    let cb = (b - y) * 0.5 / (1. - KB) + neutral;
+    let cr = (r - y) * 0.5 / (1. - KR) + neutral;
+    [y, cb, cr].map(|v| v.round().clamp(0., max) as u16)
 }
 
 /// Gives fully transparent pixels the average color of their visible neighbors,
